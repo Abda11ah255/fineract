@@ -20,8 +20,6 @@ package org.apache.fineract.integrationtests.common;
 
 import static org.apache.fineract.client.feign.util.FeignCalls.ok;
 
-import io.restassured.specification.RequestSpecification;
-import io.restassured.specification.ResponseSpecification;
 import java.util.Set;
 import org.apache.fineract.client.feign.services.StandingInstructionsHistoryApi.RetrieveAllStandingInstructionHistoryQueryParams;
 import org.apache.fineract.client.models.GetStandingInstructionHistoryPageItemsResponse;
@@ -43,7 +41,7 @@ public class StandingInstructionsHelper {
 
     private String officeId = OFFICE_ID;
 
-    public StandingInstructionsHelper(final RequestSpecification requestSpec, final ResponseSpecification responseSpec) {}
+    public StandingInstructionsHelper() {}
 
     public StandingInstructionCreationRequest build(final String clientId, final String fromAccountId, final String toAccountId,
             final String fromAccountType, final String toAccountType, final String validFrom, final String validTo, final String monthDay) {
@@ -61,6 +59,20 @@ public class StandingInstructionsHelper {
         PostStandingInstructionsResponse response = ok(
                 () -> FineractFeignClientHelper.getFineractFeignClient().standingInstructions().createStandingInstruction(
                         build(clientId, fromAccountId, toAccountId, fromAccountType, toAccountType, validFrom, validTo, monthDay)));
+        return response.getResourceId();
+    }
+
+    /**
+     * Creates a standing instruction for a fixed amount that may exceed the balance available on the from account,
+     * optionally letting the job transfer whatever is available instead of nothing.
+     */
+    public Integer createStandingInstruction(final String clientId, final String fromAccountId, final String toAccountId,
+            final String fromAccountType, final String toAccountType, final String validFrom, final String validTo, final String monthDay,
+            final String amount, final Boolean allowPartialTransfer) {
+        PostStandingInstructionsResponse response = ok(
+                () -> FineractFeignClientHelper.getFineractFeignClient().standingInstructions().createStandingInstruction(
+                        build(clientId, fromAccountId, toAccountId, fromAccountType, toAccountType, validFrom, validTo, monthDay)
+                                .amount(amount).allowPartialTransfer(allowPartialTransfer)));
         return response.getResourceId();
     }
 

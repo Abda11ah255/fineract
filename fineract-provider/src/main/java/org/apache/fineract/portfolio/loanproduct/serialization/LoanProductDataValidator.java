@@ -34,6 +34,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.fineract.accounting.common.AccountingConstants.LoanProductAccountingParams;
@@ -48,6 +50,7 @@ import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidati
 import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
 import org.apache.fineract.infrastructure.core.service.MathUtil;
 import org.apache.fineract.portfolio.calendar.service.CalendarUtils;
+import org.apache.fineract.portfolio.common.domain.MonthEndDueDateStrategy;
 import org.apache.fineract.portfolio.common.domain.PeriodFrequencyType;
 import org.apache.fineract.portfolio.loanaccount.api.LoanApiConstants;
 import org.apache.fineract.portfolio.loanaccount.api.LoanTransactionApiConstants;
@@ -121,6 +124,7 @@ public final class LoanProductDataValidator {
     public static final String IS_FLOATING_INTEREST_RATE_CALCULATION_ALLOWED = "isFloatingInterestRateCalculationAllowed";
     public static final String ACCOUNTING_RULE = "accountingRule";
     public static final String ENABLE_ACCRUAL_ACTIVITY_POSTING = "enableAccrualActivityPosting";
+    public static final String DATATABLES = "datatables";
 
     /**
      * The parameters supported for this command.
@@ -200,7 +204,7 @@ public final class LoanProductDataValidator {
             LoanProductConstants.ENABLE_ACCRUAL_ACTIVITY_POSTING, LoanProductConstants.SUPPORTED_INTEREST_REFUND_TYPES,
             LoanProductConstants.CHARGE_OFF_BEHAVIOUR, LoanProductConstants.INTEREST_RECOGNITION_ON_DISBURSEMENT_DATE,
             LoanProductConstants.DAYS_IN_YEAR_CUSTOM_STRATEGY_TYPE_PARAMETER_NAME,
-            LoanProductConstants.ENABLE_INCOME_CAPITALIZATION_PARAM_NAME,
+            LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME, LoanProductConstants.ENABLE_INCOME_CAPITALIZATION_PARAM_NAME,
             LoanProductConstants.CAPITALIZED_INCOME_CALCULATION_TYPE_PARAM_NAME,
             LoanProductConstants.CAPITALIZED_INCOME_STRATEGY_PARAM_NAME, LoanProductConstants.CAPITALIZED_INCOME_TYPE_PARAM_NAME,
             LoanProductConstants.ENABLE_BUY_DOWN_FEE_PARAM_NAME, LoanProductConstants.BUY_DOWN_FEE_CALCULATION_TYPE_PARAM_NAME,
@@ -211,6 +215,9 @@ public final class LoanProductDataValidator {
             LoanProductAccountingParams.BUYDOWN_FEE_CLASSIFICATION_TO_INCOME_ACCOUNT_MAPPINGS.getValue(), //
             LoanProductConstants.ALLOW_FULL_TERM_FOR_TRANCHE_PARAM_NAME //
     ));
+
+    private static final Set<String> SUPPORTED_CREATE_PARAMETERS = Stream.concat(SUPPORTED_PARAMETERS.stream(), Stream.of(DATATABLES))
+            .collect(Collectors.toUnmodifiableSet());
 
     private static final String[] SUPPORTED_LOAN_CONFIGURABLE_ATTRIBUTES = { LoanProductConstants.amortizationTypeParamName,
             LoanProductConstants.interestTypeParamName, LoanProductConstants.transactionProcessingStrategyCodeParamName,
@@ -236,7 +243,7 @@ public final class LoanProductDataValidator {
         }
 
         final Type typeOfMap = new TypeToken<Map<String, Object>>() {}.getType();
-        this.fromApiJsonHelper.checkForUnsupportedParameters(typeOfMap, json, SUPPORTED_PARAMETERS);
+        this.fromApiJsonHelper.checkForUnsupportedParameters(typeOfMap, json, SUPPORTED_CREATE_PARAMETERS);
 
         final List<ApiParameterError> dataValidationErrors = new ArrayList<>();
         final DataValidatorBuilder baseDataValidator = new DataValidatorBuilder(dataValidationErrors).resource(LOANPRODUCT);
@@ -909,7 +916,18 @@ public final class LoanProductDataValidator {
 
         validateBuyDownFee(transactionProcessingStrategyCode, element, baseDataValidator, accountingRuleType);
 
+        validateMonthEndDueDateStrategy(element, baseDataValidator);
+
         throwExceptionIfValidationWarningsExist(dataValidationErrors);
+    }
+
+    public void validateMonthEndDueDateStrategy(final JsonElement element, final DataValidatorBuilder baseDataValidator) {
+        if (this.fromApiJsonHelper.parameterExists(LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME, element)) {
+            final String monthEndDueDateStrategy = this.fromApiJsonHelper
+                    .extractStringNamed(LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME, element);
+            baseDataValidator.reset().parameter(LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME)
+                    .value(monthEndDueDateStrategy).ignoreIfNull().isOneOfEnumValues(MonthEndDueDateStrategy.class);
+        }
     }
 
     private void validateAutoRepaymentForDownPayment(Boolean enableDownPayment, DataValidatorBuilder baseDataValidator,
@@ -2031,6 +2049,8 @@ public final class LoanProductDataValidator {
         validateIncomeCapitalization(transactionProcessingStrategyCode, element, baseDataValidator, accountingRuleType);
 
         validateBuyDownFee(transactionProcessingStrategyCode, element, baseDataValidator, accountingRuleType);
+
+        validateMonthEndDueDateStrategy(element, baseDataValidator);
 
         throwExceptionIfValidationWarningsExist(dataValidationErrors);
     }

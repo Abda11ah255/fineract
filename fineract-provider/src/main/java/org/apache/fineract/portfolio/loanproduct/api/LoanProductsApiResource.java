@@ -71,12 +71,17 @@ import org.apache.fineract.infrastructure.core.domain.ExternalId;
 import org.apache.fineract.infrastructure.core.serialization.ApiRequestJsonSerializationSettings;
 import org.apache.fineract.infrastructure.core.serialization.DefaultToApiJsonSerializer;
 import org.apache.fineract.infrastructure.core.service.ExternalIdFactory;
+import org.apache.fineract.infrastructure.dataqueries.data.DatatableData;
+import org.apache.fineract.infrastructure.dataqueries.data.EntityTables;
+import org.apache.fineract.infrastructure.dataqueries.data.StatusEnum;
+import org.apache.fineract.infrastructure.dataqueries.service.EntityDatatableChecksReadService;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.organisation.monetary.data.CurrencyData;
 import org.apache.fineract.organisation.monetary.service.CurrencyReadPlatformService;
 import org.apache.fineract.portfolio.charge.data.ChargeData;
 import org.apache.fineract.portfolio.charge.service.ChargeReadPlatformService;
 import org.apache.fineract.portfolio.common.domain.DaysInYearCustomStrategyType;
+import org.apache.fineract.portfolio.common.domain.MonthEndDueDateStrategy;
 import org.apache.fineract.portfolio.common.service.DropdownReadPlatformService;
 import org.apache.fineract.portfolio.delinquency.data.DelinquencyBucketData;
 import org.apache.fineract.portfolio.delinquency.domain.DelinquencyBucketType;
@@ -129,7 +134,7 @@ public class LoanProductsApiResource {
             "minInterestRatePerPeriod", "maxInterestRatePerPeriod", "interestRateFrequencyType", "annualInterestRate", "amortizationType",
             "interestType", "interestCalculationPeriodType", LoanProductConstants.ALLOW_PARTIAL_PERIOD_INTEREST_CALCUALTION_PARAM_NAME,
             "inArrearsTolerance", "transactionProcessingStrategyCode", "transactionProcessingStrategyName", "charges", "accountingRule",
-            "externalId", "accountingMappings", "paymentChannelToFundSourceMappings", "fundOptions", "paymentTypeOptions",
+            "externalId", "datatables", "accountingMappings", "paymentChannelToFundSourceMappings", "fundOptions", "paymentTypeOptions",
             "currencyOptions", "repaymentFrequencyTypeOptions", "interestRateFrequencyTypeOptions", "amortizationTypeOptions",
             "interestTypeOptions", "interestCalculationPeriodTypeOptions", "transactionProcessingStrategyOptions", "chargeOptions",
             "accountingOptions", "accountingRuleOptions", "accountingMappingOptions", "floatingRateOptions",
@@ -140,7 +145,7 @@ public class LoanProductsApiResource {
             LoanProductConstants.OVER_DUE_DAYS_FOR_REPAYMENT_EVENT, LoanProductConstants.ENABLE_DOWN_PAYMENT,
             LoanProductConstants.DISBURSED_AMOUNT_PERCENTAGE_DOWN_PAYMENT, LoanProductConstants.ENABLE_AUTO_REPAYMENT_DOWN_PAYMENT,
             LoanProductConstants.REPAYMENT_START_DATE_TYPE, LoanProductConstants.DAYS_IN_YEAR_CUSTOM_STRATEGY_TYPE_PARAMETER_NAME,
-            LoanProductConstants.ENABLE_INCOME_CAPITALIZATION_PARAM_NAME,
+            LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME, LoanProductConstants.ENABLE_INCOME_CAPITALIZATION_PARAM_NAME,
             LoanProductConstants.CAPITALIZED_INCOME_CALCULATION_TYPE_PARAM_NAME,
             LoanProductConstants.CAPITALIZED_INCOME_STRATEGY_PARAM_NAME, LoanProductConstants.CAPITALIZED_INCOME_TYPE_PARAM_NAME,
             LoanProductConstants.ENABLE_BUY_DOWN_FEE_PARAM_NAME, LoanProductConstants.BUY_DOWN_FEE_CALCULATION_TYPE_PARAM_NAME,
@@ -173,6 +178,7 @@ public class LoanProductsApiResource {
     private final ConfigurationDomainService configurationDomainService;
     private final DelinquencyReadPlatformService delinquencyReadPlatformService;
     private final CodeValueReadPlatformService codeValueReadPlatformService;
+    private final EntityDatatableChecksReadService entityDatatableChecksReadService;
 
     @POST
     @Consumes({ MediaType.APPLICATION_JSON })
@@ -250,6 +256,9 @@ public class LoanProductsApiResource {
 
         LoanProductData loanProduct = this.loanProductReadPlatformService.retrieveNewLoanProductDetails();
         loanProduct = handleTemplate(loanProduct);
+        final List<DatatableData> datatableTemplates = this.entityDatatableChecksReadService.retrieveTemplates(StatusEnum.CREATE.getValue(),
+                EntityTables.LOAN_PRODUCT.getName(), null);
+        loanProduct.setDatatables(datatableTemplates);
 
         return this.toApiJsonSerializer.serialize(settings, loanProduct, LOAN_PRODUCT_DATA_PARAMETERS);
     }
@@ -471,6 +480,8 @@ public class LoanProductsApiResource {
                 .retrieveCodeValuesByCode(LoanApiConstants.CHARGE_OFF_REASONS);
         final List<StringEnumOptionData> daysInYearCustomStrategyOptions = ApiFacingEnum
                 .getValuesAsStringEnumOptionDataList(DaysInYearCustomStrategyType.class);
+        final List<StringEnumOptionData> monthEndDueDateStrategyOptions = ApiFacingEnum
+                .getValuesAsStringEnumOptionDataList(MonthEndDueDateStrategy.class);
         final List<StringEnumOptionData> capitalizedIncomeCalculationTypeOptions = ApiFacingEnum
                 .getValuesAsStringEnumOptionDataList(LoanCapitalizedIncomeCalculationType.class);
         final List<StringEnumOptionData> capitalizedIncomeStrategyOptions = ApiFacingEnum
@@ -503,7 +514,8 @@ public class LoanProductsApiResource {
                 creditAllocationAllocationTypes, supportedInterestRefundTypesOptions, chargeOffBehaviourOptions, chargeOffReasonOptions,
                 daysInYearCustomStrategyOptions, capitalizedIncomeCalculationTypeOptions, capitalizedIncomeStrategyOptions,
                 capitalizedIncomeTypeOptions, buyDownFeeCalculationTypeOptions, buyDownFeeStrategyOptions, buyDownFeeIncomeTypeOptions,
-                writeOffReasonOptions, capitalizedIncomeClassificationOptions, buydownFeeClassificationOptions);
+                writeOffReasonOptions, capitalizedIncomeClassificationOptions, buydownFeeClassificationOptions,
+                monthEndDueDateStrategyOptions);
     }
 
 }

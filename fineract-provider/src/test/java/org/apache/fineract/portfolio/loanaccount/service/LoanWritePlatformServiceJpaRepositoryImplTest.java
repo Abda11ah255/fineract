@@ -21,11 +21,13 @@ package org.apache.fineract.portfolio.loanaccount.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -95,6 +97,7 @@ import org.apache.fineract.useradministration.domain.AppUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -218,7 +221,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         when(loanProduct.getLoanProductRelatedDetail()).thenReturn(loanProductDetail);
         loan = new LoanBuilder(loanProduct).withId(LOAN_ID).build();
 
-        when(loanAssembler.assembleFrom(anyLong())).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(anyLong())).thenReturn(loan);
 
         command = mock(JsonCommand.class);
 
@@ -236,7 +239,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         when(loanProduct.getLoanProductRelatedDetail()).thenReturn(loanProductDetail);
         loan = new LoanBuilder(loanProduct).withId(LOAN_ID).withLoanStatus(LoanStatus.ACTIVE).withChargedOff(true).build();
 
-        when(loanAssembler.assembleFrom(anyLong())).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(anyLong())).thenReturn(loan);
 
         command = mock(JsonCommand.class);
 
@@ -259,7 +262,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
 
         loan = new LoanBuilder(loanProduct).withId(LOAN_ID).withLoanStatus(LoanStatus.ACTIVE).withLoanTransactions(List.of(t1)).build();
 
-        when(loanAssembler.assembleFrom(anyLong())).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(anyLong())).thenReturn(loan);
 
         command = mock(JsonCommand.class);
         when(command.localDateValueOfParameterNamed("transactionDate")).thenReturn(DateUtils.parseLocalDate("2025-05-14"));
@@ -284,7 +287,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
 
         loan = new LoanBuilder(loanProduct).withId(LOAN_ID).withLoanStatus(LoanStatus.ACTIVE).withLoanTransactions(List.of(t1)).build();
 
-        when(loanAssembler.assembleFrom(anyLong())).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(anyLong())).thenReturn(loan);
 
         command = mock(JsonCommand.class);
         when(command.localDateValueOfParameterNamed("transactionDate")).thenReturn(DateUtils.parseLocalDate("2025-05-24"));
@@ -321,7 +324,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         loan.addLoanTransaction(t1);
         loan.addLoanTransaction(t2);
 
-        when(loanAssembler.assembleFrom(anyLong())).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(anyLong())).thenReturn(loan);
 
         command = mock(JsonCommand.class);
         when(command.localDateValueOfParameterNamed("transactionDate")).thenReturn(DateUtils.parseLocalDate("2025-05-12"));
@@ -399,7 +402,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         when(command.dateFormat()).thenReturn("dd MMMM yyyy");
 
         // Setup service mocks
-        when(loanAssembler.assembleFrom(LOAN_ID)).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(LOAN_ID)).thenReturn(loan);
         when(loanLifecycleStateMachine.dryTransition(any(), any())).thenReturn(LoanStatus.ACTIVE);
         when(loanDisbursementService.adjustDisburseAmount(any(), any(), any())).thenReturn(Money.of(currency, BigDecimal.valueOf(20000)));
         when(externalIdFactory.createFromCommand(any(), any())).thenReturn(ExternalId.empty());
@@ -483,7 +486,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         when(command.dateFormat()).thenReturn("dd MMMM yyyy");
 
         // Setup service mocks
-        when(loanAssembler.assembleFrom(LOAN_ID)).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(LOAN_ID)).thenReturn(loan);
         when(loanLifecycleStateMachine.dryTransition(any(), any())).thenReturn(LoanStatus.ACTIVE);
         when(loanDisbursementService.adjustDisburseAmount(any(), any(), any())).thenReturn(Money.of(currency, BigDecimal.valueOf(20000)));
         when(externalIdFactory.createFromCommand(any(), any())).thenReturn(ExternalId.empty());
@@ -564,7 +567,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         when(command.dateFormat()).thenReturn("dd MMMM yyyy");
 
         // Setup service mocks
-        when(loanAssembler.assembleFrom(LOAN_ID)).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(LOAN_ID)).thenReturn(loan);
         when(loanLifecycleStateMachine.dryTransition(any(), any())).thenReturn(LoanStatus.ACTIVE);
         when(loanDisbursementService.adjustDisburseAmount(any(), any(), any())).thenReturn(Money.of(currency, BigDecimal.valueOf(20000)));
         when(externalIdFactory.createFromCommand(any(), any())).thenReturn(ExternalId.empty());
@@ -668,6 +671,43 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         verify(loanOriginatorLinkingService).processOriginatorsForLoanDisbursement(eq(LOAN_ID), eq(originators));
     }
 
+    @Test
+    @MockitoSettings(strictness = Strictness.LENIENT)
+    public void disburseLoan_withOriginators_shouldLinkOriginatorsBeforeAnyLoanTransactionIsCreated() {
+        final JsonArray originators = new JsonArray();
+        final JsonObject originator = new JsonObject();
+        originator.addProperty("externalId", "ORIGINATOR-A");
+        originators.add(originator);
+        final DisbursementFixture fixture = setupHappyPathDisbursement(originators, originators);
+
+        loanWritePlatformService.disburseLoan(LOAN_ID, fixture.command, false);
+
+        // Every transaction (and event) created during disbursement must already see the originator link.
+        final InOrder inOrder = inOrder(loanOriginatorLinkingService, loanDisbursementService, loanTransactionRepository,
+                journalEntryPoster);
+        inOrder.verify(loanOriginatorLinkingService).processOriginatorsForLoanDisbursement(eq(LOAN_ID), eq(originators));
+        inOrder.verify(loanDisbursementService).adjustDisburseAmount(any(), any(), any());
+        inOrder.verify(loanTransactionRepository).saveAndFlush(any(LoanTransaction.class));
+        inOrder.verify(journalEntryPoster).postJournalEntriesForLoanTransaction(any(LoanTransaction.class), eq(false), eq(false));
+    }
+
+    @Test
+    @MockitoSettings(strictness = Strictness.LENIENT)
+    public void disburseLoan_whenOriginatorProcessingFails_shouldNotCreateAnyLoanTransaction() {
+        final JsonArray originators = new JsonArray();
+        final JsonObject originator = new JsonObject();
+        originator.addProperty("id", 999L);
+        originators.add(originator);
+        final DisbursementFixture fixture = setupHappyPathDisbursement(originators, originators);
+        doThrow(new LoanOriginatorNotFoundException(999L)).when(loanOriginatorLinkingService)
+                .processOriginatorsForLoanDisbursement(eq(LOAN_ID), eq(originators));
+
+        assertThrows(LoanOriginatorNotFoundException.class, () -> loanWritePlatformService.disburseLoan(LOAN_ID, fixture.command, false));
+
+        verify(loanTransactionRepository, never()).saveAndFlush(any(LoanTransaction.class));
+        verify(journalEntryPoster, never()).postJournalEntriesForLoanTransaction(any(LoanTransaction.class), anyBoolean(), anyBoolean());
+    }
+
     private DisbursementFixture setupHappyPathDisbursement(final JsonElement originatorsElement, final JsonArray extractedOriginators) {
         final DisbursementFixture fixture = setupDisbursementThroughOriginatorProcessing(originatorsElement, extractedOriginators);
         stubPostOriginatorDisbursementSteps(fixture);
@@ -690,7 +730,7 @@ public class LoanWritePlatformServiceJpaRepositoryImplTest {
         fixture.command = mock(JsonCommand.class);
         fixture.loan = loan;
 
-        when(loanAssembler.assembleFrom(LOAN_ID)).thenReturn(loan);
+        when(loanAssembler.assembleFromInUserScope(LOAN_ID)).thenReturn(loan);
         when(loan.loanProduct()).thenReturn(loanProduct);
         when(loan.getLoanProduct()).thenReturn(loanProduct);
         when(loan.getLoanProductRelatedDetail()).thenReturn(loanProductRelatedDetail);

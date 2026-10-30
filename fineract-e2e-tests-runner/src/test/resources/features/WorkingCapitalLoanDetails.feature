@@ -21,6 +21,7 @@ Feature: Working Capital Loan Details
       | clientAccountNo                                | present                      |
       | clientName                                     | present                      |
       | clientOfficeId                                 | 1                            |
+      | clientOfficeName                               | Head Office                  |
       | loanProductId                                  | present                      |
       | loanProductName                                | WCLP                         |
       | loanProductDescription                         | Working Capital Loan Product |
@@ -62,12 +63,12 @@ Feature: Working Capital Loan Details
       | currency.displayLabel                          | Euro (€)                     |
       | fundId                                         | null                         |
       | fundName                                       | null                         |
-      | repaymentEvery                                 | 30                           |
+      | repaymentEvery                                 | 1                            |
       | repaymentFrequencyType.code                    | DAYS                         |
       | repaymentFrequencyType.value                   | present                      |
       | delinquencyGraceDays                           | null                         |
       | delinquencyStartType.code                      | null                         |
-      | breachGraceDays                                | 0                            |
+      | breachGraceDays                                | null                         |
       | delinquencyBucket                              | present                      |
       | delinquencyBucket.id                           | present                      |
       | delinquencyBucket.name                         | present                      |
@@ -633,4 +634,157 @@ Feature: Working Capital Loan Details
     Then Delinquency Tag History for Working Capital loan has lines:
       | periodNumber | addedOnDate | liftedOnDate | classification | minimumAgeDays | maximumAgeDays |
     Then Admin closes the Working Capital loan with all obligations met with a full repayment on "07 October 2026"
+
+  @TestRailId:C115369
+  Scenario: Verify Working Capital loan details totalPayment - UC1: reversed repayment is excluded
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a client with random data
+    And Admin creates a working capital loan with the following data:
+      | LoanProduct | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | WCLP        | 01 January 2026 | 01 January 2026          | 100.0           | 100.0              | 1.0               | 0.0      |
+    Then Working capital loan creation was successful
+    When Admin successfully approves the working capital loan on "01 January 2026" with "100" amount and expected disbursement date on "01 January 2026"
+    Then Working capital loan approval was successful
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "100" EUR transaction amount
+    Then Verify Working Capital loan disbursement was successful
+    When Admin sets the business date to "02 January 2026"
+    And Admin runs inline COB job for Working Capital Loan by loanId
+# --- Repayment ---
+    When Customer makes repayment on "02 January 2026" with 30 transaction amount on Working Capital loan
+    Then Working capital loan details has the following field values:
+      | summary.totalRepayment | 30.0 |
+      | summary.totalPayment   | 30.0 |
+# --- Undo the repayment: it must be excluded from totalPayment ---
+    When Customer undo "1"th "Repayment" transaction made on "02 January 2026" on Working Capital loan
+    Then Working capital loan details has the following field values:
+      | summary.totalRepayment | 0.0 |
+      | summary.totalPayment   | 0.0 |
+# Closing the loan
+    When Admin sets the business date to "03 January 2026"
+    And Admin runs inline COB job for Working Capital Loan by loanId
+    Then Admin closes the Working Capital loan with a full repayment on "03 January 2026"
+    Then Working Capital loan status will be "CLOSED_OBLIGATIONS_MET"
+
+  @TestRailId:C115370
+  Scenario: Verify Working Capital loan details totalPayment - UC2: multiple repayment-like transaction types are summed
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a client with random data
+    And Admin creates a working capital loan with the following data:
+      | LoanProduct | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | WCLP        | 01 January 2026 | 01 January 2026          | 100.0           | 100.0              | 1.0               | 0.0      |
+    Then Working capital loan creation was successful
+    When Admin successfully approves the working capital loan on "01 January 2026" with "100" amount and expected disbursement date on "01 January 2026"
+    Then Working capital loan approval was successful
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "100" EUR transaction amount
+    Then Verify Working Capital loan disbursement was successful
+    When Admin sets the business date to "02 January 2026"
+    And Admin runs inline COB job for Working Capital Loan by loanId
+# --- Repayment ---
+    When Customer makes repayment on "02 January 2026" with 20 transaction amount on Working Capital loan
+# --- Payout refund ---
+    When Customer makes "PAYOUT_REFUND" transaction on "02 January 2026" with 10 transaction amount on Working Capital loan
+# --- Goodwill credit ---
+    When Customer makes "GOODWILL_CREDIT" transaction on "02 January 2026" with 5 transaction amount on Working Capital loan
+    Then Working capital loan details has the following field values:
+      | summary.totalPayment | 35.0 |
+# Closing the loan
+    When Admin sets the business date to "03 January 2026"
+    And Admin runs inline COB job for Working Capital Loan by loanId
+    Then Admin closes the Working Capital loan with a full repayment on "03 January 2026"
+    Then Working Capital loan status will be "CLOSED_OBLIGATIONS_MET"
+
+  @TestRailId:C115371
+  Scenario: Verify Working Capital loan details totalPayment - UC3: overpaid loan exposes totalPayment and CBR keeps it unchanged
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a client with random data
+    And Admin creates a working capital loan with the following data:
+      | LoanProduct | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | WCLP        | 01 January 2026 | 01 January 2026          | 100.0           | 100.0              | 1.0               | 0.0      |
+    Then Working capital loan creation was successful
+    When Admin successfully approves the working capital loan on "01 January 2026" with "100" amount and expected disbursement date on "01 January 2026"
+    Then Working capital loan approval was successful
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "100" EUR transaction amount
+    Then Verify Working Capital loan disbursement was successful
+    When Admin sets the business date to "02 January 2026"
+    And Admin runs inline COB job for Working Capital Loan by loanId
+# --- Repayment ---
+    When Customer makes repayment on "02 January 2026" with 150 transaction amount on Working Capital loan
+    Then Working Capital loan status will be "OVERPAID"
+    And Working capital loan details has the following field values:
+      | summary.totalRepayment | 100.0 |
+      | summary.overpayment    | 50.0  |
+      | summary.totalPayment   | 150.0 |
+# --- Credit balance refund closes the loan; CBR is not a payment type so totalPayment stays unchanged ---
+    When Admin sets the business date to "03 January 2026"
+    And Admin runs inline COB job for Working Capital Loan by loanId
+    When Customer makes credit balance refund on "03 January 2026" with 50.0 transaction amount on Working Capital loan
+    Then Working Capital loan status will be "CLOSED_OBLIGATIONS_MET"
+    And Working capital loan details has the following field values:
+      | summary.totalRepayment | 100.0 |
+      | summary.overpayment    | 0.0   |
+      | summary.totalPayment   | 150.0 |
+
+  @TestRailId:C115444
+  Scenario: Verify loan details returns the client office of a client outside of the head office in every loan status - UC1
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a new office
+    And Admin creates a client with random data in the last created office
+    And Admin creates a working capital loan with the following data:
+      | LoanProduct | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | WCLP        | 01 January 2026 | 01 January 2026          | 100.0           | 100.0              | 1.0               | 0.0      |
+    Then Working capital loan creation was successful
+    Then Working capital loan details has the client office of the last created office
+    And Working capital loan details has the following field values:
+      | status.value | Submitted and pending approval |
+    When Admin successfully approves the working capital loan on "01 January 2026" with "100" amount and expected disbursement date on "01 January 2026"
+    Then Working capital loan approval was successful
+    Then Working capital loan details has the client office of the last created office
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "100" EUR transaction amount
+    Then Verify Working Capital loan disbursement was successful
+    Then Working capital loan details has the client office of the last created office
+    Then Admin closes the Working Capital loan with all obligations met with a full repayment on "01 January 2026"
+    Then Working capital loan details has the client office of the last created office
+
+  @TestRailId:C115445
+  Scenario: Verify the client office is returned by loan details by external id, the loan list and the batch api - UC2
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a new office
+    And Admin creates a client with random data in the last created office
+    And Admin creates a working capital loan with the following data:
+      | LoanProduct | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | WCLP        | 01 January 2026 | 01 January 2026          | 100.0           | 100.0              | 1.0               | 0.0      |
+    Then Working capital loan creation was successful
+    When Admin successfully approves the working capital loan on "01 January 2026" with "100" amount and expected disbursement date on "01 January 2026"
+    Then Working capital loan approval was successful
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "100" EUR transaction amount
+    Then Verify Working Capital loan disbursement was successful
+    Then Working capital loan details retrieved by external id has the client office of the last created office
+    And Working capital loan list filtered by client has the client office of the last created office
+    And Working capital loan details has the client office of the last created office via batch api
+    Then Admin closes the Working Capital loan with all obligations met with a full repayment on "01 January 2026"
+
+  @TestRailId:C115446
+  Scenario: Verify loan details returns the new office name after the client office is renamed - UC3
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a new office
+    And Admin creates a client with random data in the last created office
+    And Admin creates a working capital loan with the following data:
+      | LoanProduct | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | WCLP        | 01 January 2026 | 01 January 2026          | 100.0           | 100.0              | 1.0               | 0.0      |
+    Then Working capital loan creation was successful
+    When Admin successfully approves the working capital loan on "01 January 2026" with "100" amount and expected disbursement date on "01 January 2026"
+    Then Working capital loan approval was successful
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "100" EUR transaction amount
+    Then Verify Working Capital loan disbursement was successful
+    Then Working capital loan details has the client office of the last created office
+    When Admin renames the last created office
+    Then Working capital loan details has the client office of the last created office
+    Then Admin closes the Working Capital loan with all obligations met with a full repayment on "01 January 2026"
+
+  @TestRailId:C115447
+  Scenario: Verify loan template does not return the client office fields - UC4
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a new office
+    And Admin creates a client with random data in the last created office
+    Then Working capital loan template for the client has no client office fields
 

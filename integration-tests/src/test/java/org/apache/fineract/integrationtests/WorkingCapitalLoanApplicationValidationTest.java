@@ -19,6 +19,7 @@
 package org.apache.fineract.integrationtests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -49,14 +50,18 @@ import org.junit.jupiter.params.provider.ValueSource;
 public class WorkingCapitalLoanApplicationValidationTest {
 
     private static Long delinquencyBucketId;
+    private static Long breachId;
 
     private final WorkingCapitalLoanHelper applicationHelper = new WorkingCapitalLoanHelper();
     private final WorkingCapitalLoanProductHelper productHelper = new WorkingCapitalLoanProductHelper();
     private final WorkingCapitalBreachHelper breachHelper = new WorkingCapitalBreachHelper();
 
     @BeforeAll
-    static void initDelinquency() {
+    static void initSharedFixtures() {
         delinquencyBucketId = DelinquencyBucketsHelper.createDefaultWorkingCapitalBucket();
+        final WorkingCapitalBreachHelper helper = new WorkingCapitalBreachHelper();
+        breachId = helper.create(
+                helper.createBreachRequest(Utils.randomStringGenerator("Breach", 20), 30, "DAYS", "PERCENTAGE", BigDecimal.valueOf(10)));
     }
 
     @Test
@@ -504,8 +509,8 @@ public class WorkingCapitalLoanApplicationValidationTest {
         final Long productId = createProduct();
         final Long clientId = createClient();
 
-        final Long breachId = breachHelper
-                .create(breachHelper.createBreachRequest("Validation WCL Breach", 30, "DAYS", "PERCENTAGE", BigDecimal.valueOf(10)));
+        final Long loanBreachId = breachHelper.create(breachHelper.createBreachRequest(Utils.randomStringGenerator("Breach", 20), 30,
+                "DAYS", "PERCENTAGE", BigDecimal.valueOf(10)));
 
         final var json = new WorkingCapitalLoanApplicationTestBuilder() //
                 .withClientId(clientId) //
@@ -513,7 +518,7 @@ public class WorkingCapitalLoanApplicationValidationTest {
                 .withPrincipal(BigDecimal.valueOf(5000)) //
                 .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
                 .withTotalPaymentVolume(BigDecimal.valueOf(5500)) //
-                .withBreachId(breachId) //
+                .withBreachId(loanBreachId) //
                 .buildSubmitRequest();
 
         final CallFailedRuntimeException ex = applicationHelper.runSubmitExpectingFailure(json);
@@ -524,7 +529,62 @@ public class WorkingCapitalLoanApplicationValidationTest {
         assertTrue(ex.getDeveloperMessage().contains("breachId"), "Expected breachId in: " + ex.getDeveloperMessage());
 
         productHelper.deleteWorkingCapitalLoanProductById(productId);
-        breachHelper.delete(breachId);
+        breachHelper.delete(loanBreachId);
+    }
+
+    @Test
+    public void testSubmitWithGraceDaysAndStartTypesNotAllowedByProduct() {
+        final Long productId = createProductWithoutOverrides();
+        final Long clientId = createClient();
+
+        final var json = new WorkingCapitalLoanApplicationTestBuilder() //
+                .withClientId(clientId) //
+                .withProductId(productId) //
+                .withPrincipal(BigDecimal.valueOf(5000)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(5500)) //
+                .withDelinquencyGraceDays(5) //
+                .withDelinquencyStartType("DISBURSEMENT") //
+                .withBreachGraceDays(3) //
+                .withBreachStartType("LOAN_CREATION") //
+                .buildSubmitRequest();
+
+        final CallFailedRuntimeException ex = applicationHelper.runSubmitExpectingFailure(json);
+        assertEquals(400, ex.getStatus());
+        assertNotNull(ex.getDeveloperMessage());
+        assertTrue(ex.getDeveloperMessage().contains("override.not.allowed.by.product"),
+                "Expected override.not.allowed.by.product in: " + ex.getDeveloperMessage());
+        for (final String parameter : List.of("delinquencyGraceDays", "delinquencyStartType", "breachGraceDays", "breachStartType")) {
+            assertTrue(ex.getDeveloperMessage().contains(parameter), "Expected " + parameter + " in: " + ex.getDeveloperMessage());
+        }
+
+        productHelper.deleteWorkingCapitalLoanProductById(productId);
+    }
+
+    @Test
+    public void testSubmitWithDelinquencyGraceDaysNotAllowedWhileBreachOverrideIsAllowed() {
+        final Long productId = createProductWithBreachOverride();
+        final Long clientId = createClient();
+
+        final var json = new WorkingCapitalLoanApplicationTestBuilder() //
+                .withClientId(clientId) //
+                .withProductId(productId) //
+                .withPrincipal(BigDecimal.valueOf(5000)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(5500)) //
+                .withDelinquencyGraceDays(5) //
+                .withBreachGraceDays(3) //
+                .buildSubmitRequest();
+
+        final CallFailedRuntimeException ex = applicationHelper.runSubmitExpectingFailure(json);
+        assertEquals(400, ex.getStatus());
+        assertNotNull(ex.getDeveloperMessage());
+        assertTrue(ex.getDeveloperMessage().contains("delinquencyGraceDays"),
+                "Expected delinquencyGraceDays in: " + ex.getDeveloperMessage());
+        assertFalse(ex.getDeveloperMessage().contains("breachGraceDays"),
+                "breachGraceDays is overridable on this product: " + ex.getDeveloperMessage());
+
+        productHelper.deleteWorkingCapitalLoanProductById(productId);
     }
 
     @Test
@@ -1152,6 +1212,7 @@ public class WorkingCapitalLoanApplicationValidationTest {
         return productHelper.createWorkingCapitalLoanProduct(new WorkingCapitalLoanProductTestBuilder() //
                 .withName(uniqueName) //
                 .withShortName(uniqueShortName) //
+                .withBreachId(breachId) //
                 .withAllowAttributeOverrides(Map.of("breach", true)) //
                 .build()) //
                 .getResourceId();

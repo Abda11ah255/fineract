@@ -155,6 +155,8 @@ public final class ExternalEventConfigurationTestData {
             "LoanCapitalizedIncomeAmortizationAdjustmentTransactionCreatedBusinessEvent", //
             "LoanCapitalizedIncomeTransactionCreatedBusinessEvent", //
             "LoanUndoContractTerminationBusinessEvent", //
+            "LoanTransactionLoanWithdrawalPostBusinessEvent", //
+            "LoanUndoLoanWithdrawalBusinessEvent", //
             "LoanBuyDownFeeTransactionCreatedBusinessEvent", //
             "LoanBuyDownFeeAdjustmentTransactionCreatedBusinessEvent", //
             "LoanBuyDownFeeAmortizationTransactionCreatedBusinessEvent", //
@@ -216,7 +218,8 @@ public final class ExternalEventConfigurationTestData {
             "WorkingCapitalLoanDelinquencyResetBusinessEvent", //
             "WorkingCapitalLoanDelinquencyUndoResetBusinessEvent", //
             "WorkingCapitalLoanAccrualTransactionBusinessEvent", //
-            "WorkingCapitalLoanAccrualAdjustmentTransactionBusinessEvent"//
+            "WorkingCapitalLoanAccrualAdjustmentTransactionBusinessEvent", //
+            "WorkingCapitalLoanAccountsStayedLockedBusinessEvent"//
     );
 
     private ExternalEventConfigurationTestData() {}

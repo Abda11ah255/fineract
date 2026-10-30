@@ -112,6 +112,7 @@ public class ExternalEventConfigurationValidationServiceTest {
                 "LoanCapitalizedIncomeAdjustmentTransactionCreatedBusinessEvent", "LoanTransactionContractTerminationPostBusinessEvent",
                 "LoanCapitalizedIncomeAmortizationAdjustmentTransactionCreatedBusinessEvent",
                 "LoanCapitalizedIncomeTransactionCreatedBusinessEvent", "LoanUndoContractTerminationBusinessEvent",
+                "LoanTransactionLoanWithdrawalPostBusinessEvent", "LoanUndoLoanWithdrawalBusinessEvent",
                 "LoanBuyDownFeeTransactionCreatedBusinessEvent", "LoanBuyDownFeeAdjustmentTransactionCreatedBusinessEvent",
                 "LoanBuyDownFeeAmortizationTransactionCreatedBusinessEvent",
                 "LoanBuyDownFeeAmortizationAdjustmentTransactionCreatedBusinessEvent", "LoanApprovedAmountChangedBusinessEvent",
@@ -144,7 +145,8 @@ public class ExternalEventConfigurationValidationServiceTest {
                 "WorkingCapitalLoanDelinquencyPauseBusinessEvent", "WorkingCapitalLoanDelinquencyResumeBusinessEvent",
                 "WorkingCapitalLoanDelinquencyRescheduleBusinessEvent", "WorkingCapitalLoanDelinquencyResetBusinessEvent",
                 "WorkingCapitalLoanDelinquencyUndoResetBusinessEvent", "WorkingCapitalLoanAccrualTransactionBusinessEvent",
-                "WorkingCapitalLoanAccrualAdjustmentTransactionBusinessEvent", "WorkingCapitalLoanChargeWaiverTransactionBusinessEvent");
+                "WorkingCapitalLoanAccrualAdjustmentTransactionBusinessEvent", "WorkingCapitalLoanChargeWaiverTransactionBusinessEvent",
+                "WorkingCapitalLoanAccountsStayedLockedBusinessEvent");
 
         List<FineractPlatformTenant> tenants = List
                 .of(new FineractPlatformTenant(1L, "default", "Default Tenant", "Europe/Budapest", null));
@@ -238,12 +240,14 @@ public class ExternalEventConfigurationValidationServiceTest {
                 "LoanCapitalizedIncomeAdjustmentTransactionCreatedBusinessEvent", "LoanTransactionContractTerminationPostBusinessEvent",
                 "LoanCapitalizedIncomeAmortizationAdjustmentTransactionCreatedBusinessEvent",
                 "LoanCapitalizedIncomeTransactionCreatedBusinessEvent", "LoanUndoContractTerminationBusinessEvent",
+                "LoanTransactionLoanWithdrawalPostBusinessEvent", "LoanUndoLoanWithdrawalBusinessEvent",
                 "LoanBuyDownFeeTransactionCreatedBusinessEvent", "LoanBuyDownFeeAdjustmentTransactionCreatedBusinessEvent",
                 "LoanBuyDownFeeAmortizationTransactionCreatedBusinessEvent",
                 "LoanBuyDownFeeAmortizationAdjustmentTransactionCreatedBusinessEvent", "LoanApprovedAmountChangedBusinessEvent",
                 "SavingsAccountsStayedLockedBusinessEvent", "SavingsAccountForceWithdrawalBusinessEvent",
                 "WorkingCapitalLoanDisbursalTransactionBusinessEvent", "WorkingCapitalLoanUndoDisbursalTransactionBusinessEvent",
-                "WorkingCapitalLoanRepaymentTransactionBusinessEvent", "WorkingCapitalLoanCreditBalanceRefundTransactionBusinessEvent");
+                "WorkingCapitalLoanRepaymentTransactionBusinessEvent", "WorkingCapitalLoanCreditBalanceRefundTransactionBusinessEvent",
+                "WorkingCapitalLoanAccountsStayedLockedBusinessEvent");
 
         List<FineractPlatformTenant> tenants = Arrays
                 .asList(new FineractPlatformTenant(1L, "default", "Default Tenant", "Europe/Budapest", null));

@@ -27,6 +27,7 @@ import org.apache.fineract.client.feign.services.AuditsApi;
 import org.apache.fineract.client.feign.services.AuthenticationHttpBasicApi;
 import org.apache.fineract.client.feign.services.BatchApiApi;
 import org.apache.fineract.client.feign.services.BulkImportApi;
+import org.apache.fineract.client.feign.services.BulkImportTemplatesApi;
 import org.apache.fineract.client.feign.services.BulkLoansApi;
 import org.apache.fineract.client.feign.services.BusinessDateManagementApi;
 import org.apache.fineract.client.feign.services.BusinessStepConfigurationApi;
@@ -109,6 +110,7 @@ import org.apache.fineract.client.feign.services.NotificationApi;
 import org.apache.fineract.client.feign.services.OfficesApi;
 import org.apache.fineract.client.feign.services.PasswordPreferencesApi;
 import org.apache.fineract.client.feign.services.PaymentTypeApi;
+import org.apache.fineract.client.feign.services.PayoffSchedulePreviewApi;
 import org.apache.fineract.client.feign.services.PeriodicAccrualAccountingApi;
 import org.apache.fineract.client.feign.services.PermissionsApi;
 import org.apache.fineract.client.feign.services.PovertyLineApi;
@@ -244,6 +246,10 @@ public final class FineractFeignClient {
 
     public BatchApiApi batch() {
         return create(BatchApiApi.class);
+    }
+
+    public BulkImportTemplatesApi bulkImportTemplates() {
+        return create(BulkImportTemplatesApi.class);
     }
 
     public BulkImportApi bulkImport() {
@@ -572,6 +578,10 @@ public final class FineractFeignClient {
 
     public PaymentTypeApi paymentType() {
         return create(PaymentTypeApi.class);
+    }
+
+    public PayoffSchedulePreviewApi payoffSchedulePreview() {
+        return create(PayoffSchedulePreviewApi.class);
     }
 
     public PeriodicAccrualAccountingApi periodicAccrualAccounting() {

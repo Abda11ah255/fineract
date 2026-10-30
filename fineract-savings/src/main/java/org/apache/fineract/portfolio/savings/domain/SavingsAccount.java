@@ -727,6 +727,10 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             } else {
                 postedAsOnDates = getManualPostingDates();
             }
+            if (isSavingsInterestPostingAtCurrentPeriodEnd) {
+                // With this configuration manual postings are dated on their period end, not on the day after it
+                postedAsOnDates.replaceAll(postedAsOnDate -> postedAsOnDate.plusDays(1));
+            }
             if (postInterestOnDate != null) {
                 postedAsOnDates.add(postInterestOnDate);
             }
@@ -899,7 +903,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             } else {
                 Money overdraftAmount = Money.zero(this.currency);
                 Money transactionAmount = Money.zero(this.currency);
-                if ((transaction.isCredit() || transaction.isAmountRelease())) {
+                if (transaction.isCredit()) {
                     if (runningBalance.isLessThanZero()) {
                         Money diffAmount = transaction.getAmount(this.currency).plus(runningBalance);
                         if (diffAmount.isGreaterThanZero()) {
@@ -909,7 +913,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
                         }
                     }
                     transactionAmount = transactionAmount.plus(transaction.getAmount(this.currency));
-                } else if (transaction.isDebit() || transaction.isAmountOnHold()) {
+                } else if (transaction.isDebit()) {
                     if (runningBalance.isLessThanZero()) {
                         overdraftAmount = transaction.getAmount(this.currency);
                     }
@@ -1048,7 +1052,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
         final Money amount = Money.of(this.currency, transactionDTO.getTransactionAmount());
 
         final SavingsAccountTransaction transaction = SavingsAccountTransaction.deposit(this, office(), transactionDTO.getPaymentDetail(),
-                transactionDTO.getTransactionDate(), amount, savingsAccountTransactionType, refNo);
+                transactionDTO.getTransactionDate(), transactionDTO.getTransactionTime(), amount, savingsAccountTransactionType, refNo);
 
         if (backdatedTxnsAllowedTill) {
             addTransactionToExisting(transaction);
@@ -1184,7 +1188,8 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
 
         final Money transactionAmountMoney = Money.of(this.currency, transactionDTO.getTransactionAmount());
         final SavingsAccountTransaction transaction = SavingsAccountTransaction.withdrawal(this, office(),
-                transactionDTO.getPaymentDetail(), transactionDTO.getTransactionDate(), transactionAmountMoney, refNo);
+                transactionDTO.getPaymentDetail(), transactionDTO.getTransactionDate(), transactionDTO.getTransactionTime(),
+                transactionAmountMoney, refNo);
 
         if (backdatedTxnsAllowedTill) {
             addTransactionToExisting(transaction);
@@ -1280,10 +1285,10 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             long completedDays;
 
             if (resetDate == null) {
-                completedDays = DAYS.between(DateUtils.getBusinessLocalDate(), this.activatedOnDate);
+                completedDays = DAYS.between(this.activatedOnDate, DateUtils.getBusinessLocalDate());
 
             } else {
-                completedDays = DAYS.between(DateUtils.getBusinessLocalDate(), resetDate);
+                completedDays = DAYS.between(resetDate, DateUtils.getBusinessLocalDate());
             }
 
             int totalDays = (int) completedDays;
@@ -1450,7 +1455,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
         if (!this.configurationDomainService.isForceWithdrawalOnSavingsAccountEnabled()) {
             return false;
         }
-        Long limit = this.configurationDomainService.retrieveForceWithdrawalOnSavingsAccountLimit();
+        Long limit = this.configurationDomainService.getForceWithdrawalOnSavingsAccountLimit();
         BigDecimal limitBd = BigDecimal.valueOf(limit);
         if (limitBd.compareTo(BigDecimal.ZERO) > 0) {
             limitBd = limitBd.negate();
@@ -3072,6 +3077,11 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             chargeTransaction = SavingsAccountTransaction.annualFee(this, office(), transactionDate, transactionAmount);
         } else {
             chargeTransaction = SavingsAccountTransaction.charge(this, office(), transactionDate, transactionAmount);
+        }
+        final TaxGroup chargeTaxGroup = savingsAccountCharge.getCharge().getTaxGroup();
+        if (chargeTaxGroup != null) {
+            SavingsAccountTransaction.updateTaxDetails(TaxUtils.splitTax(transactionAmount.getAmount(), transactionDate,
+                    chargeTaxGroup.getTaxGroupMappings(), transactionAmount.getAmount().scale()), chargeTransaction);
         }
 
         handleChargeTransactions(savingsAccountCharge, chargeTransaction, backdatedTxnsAllowedTill);

@@ -261,7 +261,8 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
         sqlBuilder.append("select " + sqlGenerator.calcFoundRows() + " ");
         sqlBuilder.append(this.standingInstructionMapper.schema());
         if (standingInstructionDTO.transferType() != null || standingInstructionDTO.clientId() != null
-                || standingInstructionDTO.clientName() != null) {
+                || standingInstructionDTO.clientName() != null
+                || (standingInstructionDTO.fromAccountType() != null && standingInstructionDTO.fromAccount() != null)) {
             sqlBuilder.append(" where ");
         }
         boolean addAndCaluse = false;
@@ -299,7 +300,8 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
                 sqlBuilder.append(" fromsavacc.id=? ");
                 paramObj.add(standingInstructionDTO.fromAccount());
             } else if (PortfolioAccountType.LOAN.equals(accountType)) {
-                sqlBuilder.append(" fromloanacc.id=? ");
+                sqlBuilder.append(" (toloanacc.id=? or fromloanacc.id=?) ");
+                paramObj.add(standingInstructionDTO.fromAccount());
                 paramObj.add(standingInstructionDTO.fromAccount());
             }
             addAndCaluse = true;
@@ -358,7 +360,7 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
     public StandingInstructionDuesData retriveLoanDuesData(final Long loanId) {
         final StandingInstructionLoanDuesMapper rm = new StandingInstructionLoanDuesMapper();
         final String sql = "select " + rm.schema() + " where ml.id= ? and ls.duedate <= " + sqlGenerator.currentBusinessDate()
-                + " and ls.completed_derived <> 1";
+                + " and ls.completed_derived IS FALSE";
         return this.jdbcTemplate.queryForObject(sql, rm, new Object[] { loanId }); // NOSONAR
     }
 
@@ -375,6 +377,7 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
             sqlBuilder.append("atsi.recurrence_type as recurrenceType, atsi.recurrence_frequency as recurrenceFrequency,");
             sqlBuilder.append("atsi.recurrence_interval as recurrenceInterval, atsi.recurrence_on_day as recurrenceOnDay,");
             sqlBuilder.append("atsi.recurrence_on_month as recurrenceOnMonth,");
+            sqlBuilder.append("atsi.allow_partial_transfer as allowPartialTransfer,");
             sqlBuilder.append("atd.id as accountDetailId,atd.transfer_type as transferType,");
             sqlBuilder.append("fromoff.id as fromOfficeId, fromoff.name as fromOfficeName,");
             sqlBuilder.append("tooff.id as toOfficeId, tooff.name as toOfficeName,");
@@ -511,9 +514,12 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
                 toAccountType = accountType(PortfolioAccountType.LOAN);
             }
 
+            final boolean allowPartialTransfer = rs.getBoolean("allowPartialTransfer");
+
             return StandingInstructionData.instance(id, accountDetailId, name, fromOffice, toOffice, fromClient, toClient, fromAccountType,
                     fromAccount, toAccountType, toAccount, transferTypeEnum, priorityEnum, instructionTypeEnum, statusEnum, transferAmount,
-                    validFrom, validTill, recurrenceTypeEnum, recurrenceFrequencyEnum, recurrenceInterval, recurrenceOnMonthDay);
+                    validFrom, validTill, recurrenceTypeEnum, recurrenceFrequencyEnum, recurrenceInterval, recurrenceOnMonthDay,
+                    allowPartialTransfer);
         }
     }
 

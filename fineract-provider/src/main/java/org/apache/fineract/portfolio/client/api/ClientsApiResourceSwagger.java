@@ -124,6 +124,9 @@ final class ClientsApiResourceSwagger {
         public Set<GetClientsOfficeOptions> officeOptions;
         public Set<GetClientsStaffOptions> staffOptions;
         public Set<GetClientsSavingProductOptions> savingProductOptions;
+        public List<CodeValueData> genderOptions;
+        public List<CodeValueData> clientTypeOptions;
+        public List<CodeValueData> clientClassificationOptions;
         public Set<GetClientsDataTables> datatables;
     }
 
@@ -327,6 +330,8 @@ final class ClientsApiResourceSwagger {
         public Long officeId;
         @Schema(example = "1")
         public Long legalFormId;
+        @Schema(example = "1", description = "A code value of the ClientType code")
+        public Long clientTypeId;
         @Schema(example = "Client of group")
         public String fullname;
         @Schema(example = "Client_FirstName")
