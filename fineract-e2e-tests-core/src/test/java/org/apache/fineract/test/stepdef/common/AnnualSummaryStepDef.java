@@ -38,6 +38,8 @@ public class AnnualSummaryStepDef extends AbstractStepDef {
 
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH);
     private static final String OFFICE_ID_CONFIG = "office-id";
+    private static final String RETAINED_EARNING_JOB_NAME = "RETAINED_EARNING";
+    private static final String NOOP_EXIT_CODE = "NOOP";
 
     private final JdbcTemplate testJdbcTemplate;
     private final FineractFeignClient fineractClient;
@@ -70,5 +72,36 @@ public class AnnualSummaryStepDef extends AbstractStepDef {
                 .as("acc_gl_journal_entry_annual_summary: expected %d row(s) for gl_code '%s', year_end_date %s, office %s but found %d",
                         expectedCount, glCode, yearEndDate, office.getOfficeId(), actualCount)
                 .isEqualTo(expectedCount);
+    }
+
+    @Then("The journal entry annual summary table contains {int} row(s) for GL code {string} with year end date {string} and product type {string}")
+    public void annualSummaryTableContainsRowsForProductType(final int expectedCount, final String glCode, final String yearEndDateStr,
+            final String productType) {
+        final LocalDate yearEndDate = LocalDate.parse(yearEndDateStr, FORMATTER);
+        final int productTypeId = switch (productType) {
+            case "LOAN" -> 1;
+            case "WORKING_CAPITAL_LOAN" -> 6;
+            default -> throw new IllegalArgumentException("Unsupported product type: " + productType);
+        };
+        final PostOfficesResponse office = testContext().get(TestContextKey.OFFICE_CREATE_RESPONSE);
+        assertThat(office).as("No office was created. Use 'Admin creates a new office' step first.").isNotNull();
+        final Integer actualCount = testJdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM acc_gl_journal_entry_annual_summary WHERE gl_code = ? AND year_end_date = ? AND office_id = ? AND product_type = ?",
+                Integer.class, glCode, yearEndDate, office.getOfficeId(), productTypeId);
+        assertThat(actualCount).as(
+                "acc_gl_journal_entry_annual_summary: expected %d row(s) for gl_code '%s', year_end_date %s, office %s, product_type %s but found %d",
+                expectedCount, glCode, yearEndDate, office.getOfficeId(), productType, actualCount).isEqualTo(expectedCount);
+    }
+
+    @Then("The last Retained Earning Job run was skipped without running the summary step")
+    public void lastRetainedEarningJobRunWasSkipped() {
+        final String exitCode = testJdbcTemplate.queryForObject("""
+                SELECT EXIT_CODE FROM BATCH_JOB_EXECUTION WHERE JOB_EXECUTION_ID = (
+                    SELECT MAX(e.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION e
+                    JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = e.JOB_INSTANCE_ID
+                    WHERE i.JOB_NAME = ?)
+                """, String.class, RETAINED_EARNING_JOB_NAME);
+        assertThat(exitCode).as("BATCH_JOB_EXECUTION: expected exit code '%s' for the last %s run but found '%s'", NOOP_EXIT_CODE,
+                RETAINED_EARNING_JOB_NAME, exitCode).isEqualTo(NOOP_EXIT_CODE);
     }
 }

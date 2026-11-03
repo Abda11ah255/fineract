@@ -25,9 +25,11 @@ import java.math.MathContext;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -61,6 +63,7 @@ import org.apache.fineract.portfolio.workingcapitalloan.accounting.WorkingCapita
 import org.apache.fineract.portfolio.workingcapitalloan.calc.ProjectedAmortizationScheduleModel;
 import org.apache.fineract.portfolio.workingcapitalloan.data.WorkingCapitalLoanAllocationPlan;
 import org.apache.fineract.portfolio.workingcapitalloan.data.WorkingCapitalLoanAllocationRequest;
+import org.apache.fineract.portfolio.workingcapitalloan.data.WorkingCapitalLoanTransactionData;
 import org.apache.fineract.portfolio.workingcapitalloan.domain.WorkingCapitalLoan;
 import org.apache.fineract.portfolio.workingcapitalloan.domain.WorkingCapitalLoanBalance;
 import org.apache.fineract.portfolio.workingcapitalloan.domain.WorkingCapitalLoanCharge;
@@ -124,6 +127,7 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
     private final WorkingCapitalLoanAccountingProcessor accountingProcessor;
     private final WorkingCapitalLoanTransactionFinder transactionFinder;
     private final WorkingCapitalLoanTransactionReprocessingService transactionReprocessingService;
+    private final WorkingCapitalLoanAdjustTransactionEventPublisher adjustTransactionEventPublisher;
 
     @Transactional
     @Override
@@ -237,9 +241,11 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
         // a real transaction to attribute it to: the paid-by row points at the repayment that funded it, and that
         // repayment's allocation grows by the same amount, keeping the two consistent with each other.
         final List<OverpaymentFunder> funders = loadOverpaymentFunders(loan);
+        final Map<Long, WorkingCapitalLoanTransactionData> preSnapshots = adjustTransactionEventPublisher
+                .snapshots(funders.stream().map(OverpaymentFunder::getTransaction).toList());
         final BigDecimal fundableTotal = funders.stream().map(OverpaymentFunder::getAvailable).reduce(BigDecimal.ZERO, BigDecimal::add);
         final List<WorkingCapitalLoanChargePaidBy> paidByRows = new ArrayList<>();
-        final List<WorkingCapitalLoanTransactionAllocation> touchedAllocations = new ArrayList<>();
+        final Set<WorkingCapitalLoanTransactionAllocation> touchedAllocations = new LinkedHashSet<>();
         int funderIndex = 0;
 
         BigDecimal totalUnfunded = BigDecimal.ZERO;
@@ -279,6 +285,8 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
         loanChargeRepository.saveAll(charges);
         allocationRepository.saveAll(touchedAllocations);
         chargePaidByRepository.saveAll(paidByRows);
+        adjustTransactionEventPublisher.publishReprocessed(loan.getId(), preSnapshots, funders.stream()
+                .filter(funder -> touchedAllocations.contains(funder.getAllocation())).map(OverpaymentFunder::getTransaction).toList());
 
         balance.setOverpaymentAmount(BigDecimal.ZERO);
         balanceUpdater.apply(balance, plan);
@@ -321,6 +329,7 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
             }
             loan.setMaturedOnDate(chargeDueDate);
             generateDelinquencyAndBreachPeriods(loan, chargeDueDate);
+            breachScheduleService.rederiveNearBreachIfReopened(loan, statusBeforeCharge);
         } else if (statusBeforeCharge.isOverpaid()) {
             // The overpayment exactly settled the charge: the loan closes with obligations met.
             stateMachine.transition(WorkingCapitalLoanEvent.LOAN_CREDIT_BALANCE_REFUND_IN_FULL, loan, chargeDueDate);
@@ -360,7 +369,7 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
         final LocalDate transactionDate = ThreadLocalContextUtil.getBusinessDate();
         final ExternalId externalId = externalIdFactory.createFromCommand(command, WorkingCapitalLoanChargeConstants.externalIdParamName);
 
-        chargeAdjustmentEntranceValidation(loan, wcCharge, amount);
+        chargeAdjustmentEntranceValidation(loan, wcCharge, amount, null);
 
         final Map<String, Object> changes = new LinkedHashMap<>();
         changes.put(WorkingCapitalLoanChargeConstants.amountParamName, amount);
@@ -562,8 +571,14 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
         checkClientActive(loan);
     }
 
+    @Override
+    public void validateChargeAdjustmentEntrance(final WorkingCapitalLoan loan, final WorkingCapitalLoanCharge wcCharge,
+            final BigDecimal amount, final Long excludeTransactionId) {
+        chargeAdjustmentEntranceValidation(loan, wcCharge, amount, excludeTransactionId);
+    }
+
     private void chargeAdjustmentEntranceValidation(final WorkingCapitalLoan loan, final WorkingCapitalLoanCharge wcCharge,
-            final BigDecimal amount) {
+            final BigDecimal amount, final Long excludeTransactionId) {
         if (!loan.isOpen() && !loan.isClosedObligationsMet() && !loan.isOverpaid()) {
             throw new WorkingCapitalLoanChargeAdjustmentException("wc.loan.charge.adjustment.invalid.status",
                     "Adjustment is not supported for the status of " + loan.getLoanStatus());
@@ -579,7 +594,7 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
                     "Transaction amount cannot be higher than the charge amount: " + wcCharge.getAmount());
         }
 
-        final BigDecimal available = calculateAvailableAmountForChargeAdjustment(wcCharge);
+        final BigDecimal available = calculateAvailableAmountForChargeAdjustment(wcCharge, excludeTransactionId);
         if (amount.compareTo(available) > 0) {
             throw new WorkingCapitalLoanChargeAdjustmentException("wc.loan.charge.adjustment.invalid.amount",
                     "Transaction amount cannot be higher than the available charge amount for adjustment: " + available);
@@ -588,11 +603,13 @@ public class WorkingCapitalLoanChargeWritePlatformServiceImpl implements Working
         checkClientActive(loan);
     }
 
-    private BigDecimal calculateAvailableAmountForChargeAdjustment(final WorkingCapitalLoanCharge wcCharge) {
+    private BigDecimal calculateAvailableAmountForChargeAdjustment(final WorkingCapitalLoanCharge wcCharge,
+            final Long excludeTransactionId) {
         final BigDecimal previouslyAdjusted = relationRepository
                 .findAllByToChargeAndFromTransactionReversedAndFromTransactionTransactionType(wcCharge, false,
                         LoanTransactionType.CHARGE_ADJUSTMENT)
-                .stream().map(rel -> rel.getFromTransaction().getTransactionAmount()).reduce(BigDecimal.ZERO, BigDecimal::add);
+                .stream().filter(rel -> excludeTransactionId == null || !excludeTransactionId.equals(rel.getFromTransaction().getId()))
+                .map(rel -> rel.getFromTransaction().getTransactionAmount()).reduce(BigDecimal.ZERO, BigDecimal::add);
         // Waived and adjusted relief together cannot exceed the charge: without the waived part here, an adjustment on
         // a fully waived charge would credit the borrower for a fee they never paid and no longer owe. The paid part
         // stays adjustable on purpose - relief beyond the outstanding lands on principal or overpayment, as on any

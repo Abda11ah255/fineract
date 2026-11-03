@@ -33,6 +33,8 @@ public final class ErrorMessageHelper {
 
     public static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd MMMM yyyy");
     public static final String DATA_INTEGRITY_ISSUE_ENTITY_LINKED_CODE = "error.msg.data.integrity.issue.entity.linked";
+    public static final String WC_LOAN_DUPLICATE_ACCOUNT_NO_CODE = "error.msg.wc.loan.duplicate.accountNo";
+    public static final String WC_LOAN_ACCOUNT_NO_ALREADY_USED_MESSAGE = "Loan with account number is already registered.";
 
     private ErrorMessageHelper() {}
 
@@ -123,8 +125,8 @@ public final class ErrorMessageHelper {
         return "Loan can't be disbursed, disburse amount is exceeding approved principal.";
     }
 
-    public static String loanSubmitDateInFutureFailureMsg() {
-        return "The date on which a loan is submitted cannot be in the future.";
+    public static String disburseWithChargeOutOfRangeFailure() {
+        return "This charge with specified due date cannot be added as the it is not in schedule range.";
     }
 
     public static String loanApproveDateInFutureFailureMsg() {
@@ -198,7 +200,7 @@ public final class ErrorMessageHelper {
     }
 
     public static String addCapitalizedIncomeUndoFailureTransactionTypeNonReversal() {
-        return "Only (non-reversed) transactions of type repayment, waiver, accrual, credit balance refund, capitalized income, capitalized income adjustment, buy down fee, buy down fee adjustment or chargeback can be adjusted.";
+        return "Only (non-reversed) transactions of type repayment, waiver, accrual, credit balance refund, capitalized income, capitalized income adjustment, buy down fee, buy down fee adjustment, chargeback, goodwill credit, payout refund, merchant issued refund, charge adjustment or refund can be adjusted.";
     }
 
     public static String addCapitalizedIncomeUndoFailureAdjustmentExists() {
@@ -1029,6 +1031,42 @@ public final class ErrorMessageHelper {
 
     public static String contractTerminationNotBeforeMaturityDateFailure() {
         return "[transactionDate] Failed data validation due to: must.be.before.maturity.date.";
+    }
+
+    public static String contractTerminationOnWithdrawnLoanFailure() {
+        return "Contract termination can not be applied, Loan withdrawal has been applied to the loan account.";
+    }
+
+    public static String undoContractTerminationNotAppliedFailure(final Long loanId) {
+        return String.format("Loan: %s is not contract terminated", loanId);
+    }
+
+    public static String loanWithdrawalBeforeLastTransactionDateFailure() {
+        return "[transactionDate] Failed data validation due to: cannot.be.before.last.transaction.date.";
+    }
+
+    public static String loanWithdrawalBeforeChargeSubmittedOnDateFailure() {
+        return "[transactionDate] Failed data validation due to: cannot.be.before.charge.submitted.on.date.";
+    }
+
+    public static String loanWithdrawalNotBeforeMaturityDateFailure() {
+        return "[transactionDate] Failed data validation due to: must.be.before.maturity.date.";
+    }
+
+    public static String loanWithdrawalOnTerminatedLoanFailure() {
+        return "Loan withdrawal can not be applied, Loan Account is already terminated.";
+    }
+
+    public static String loanWithdrawalAlreadyAppliedFailure() {
+        return "Loan withdrawal can not be applied, Loan withdrawal has been applied to the loan account.";
+    }
+
+    public static String undoLoanWithdrawalNotAppliedFailure(final Long loanId) {
+        return String.format("Loan: %s has no loan withdrawal applied", loanId);
+    }
+
+    public static String undoLoanWithdrawalNotLastTransactionFailure(final Long loanId) {
+        return String.format("Loan: %s loan withdrawal cannot be undone. User transaction was found after loan withdrawal!", loanId);
     }
 
     public static String incorrectExpectedValueInResponse() {

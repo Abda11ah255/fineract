@@ -46,10 +46,11 @@ import org.apache.fineract.client.models.WorkingCapitalLoanDelinquencyRangeSched
 import org.apache.fineract.integrationtests.client.FeignIntegrationTest;
 import org.apache.fineract.integrationtests.client.feign.helpers.FeignBusinessDateHelper;
 import org.apache.fineract.integrationtests.client.feign.helpers.FeignClientHelper;
+import org.apache.fineract.integrationtests.client.feign.helpers.FeignDelinquencyHelper;
 import org.apache.fineract.integrationtests.client.feign.helpers.FeignWorkingCapitalLoanHelper;
 import org.apache.fineract.integrationtests.client.feign.modules.WorkingCapitalLoanRequestBuilders;
+import org.apache.fineract.integrationtests.common.FineractFeignClientHelper;
 import org.apache.fineract.integrationtests.common.Utils;
-import org.apache.fineract.integrationtests.common.products.DelinquencyRangesHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloan.WorkingCapitalLoanDelinquencyRangeScheduleHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloanbreach.WorkingCapitalBreachHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloanproduct.WorkingCapitalLoanProductHelper;
@@ -124,6 +125,8 @@ public class FeignWorkingCapitalLoanStatusHelpersTest extends FeignIntegrationTe
 
     private Long sharedProductId;
     private Long discountOverridableProductId;
+
+    private final FeignDelinquencyHelper delinquencyHelper = new FeignDelinquencyHelper(FineractFeignClientHelper.getFineractFeignClient());
 
     @BeforeAll
     void setupHelpers() {
@@ -322,17 +325,16 @@ public class FeignWorkingCapitalLoanStatusHelpersTest extends FeignIntegrationTe
      * current configuration), hence both must stay empty.
      */
     @Test
-    @DisplayName("undo disbursal clears the actual disbursement date and COB stops adding periods")
-    void undoDisbursal_clearsActualDisbursementDateAndFreezesSchedule() {
+    @DisplayName("undo disbursal clears the actual disbursement date, discards the schedules and COB creates none")
+    void undoDisbursal_clearsActualDisbursementDateAndDiscardsSchedules() {
         businessDateHelper.runAt(BUSINESS_DATE, () -> {
             final Long loanId = submitApproveAndDisburseLoan();
 
             businessDateHelper.updateBusinessDate("BUSINESS_DATE", COB_DATE);
             wcLoanHelper.executeInlineWCCOB(loanId);
-            final int delinquencyPeriodsBeforeUndo = wcLoanHelper.getDelinquencyRangeSchedule(loanId).size();
-            final int breachPeriodsBeforeUndo = wcLoanHelper.getBreachSchedule(loanId).size();
-            assertEquals(1, delinquencyPeriodsBeforeUndo, "COB on the disbursed loan must have created delinquency period 1");
-            assertEquals(1, breachPeriodsBeforeUndo, "COB on the disbursed loan must have created breach period 1");
+            assertEquals(1, wcLoanHelper.getDelinquencyRangeSchedule(loanId).size(),
+                    "COB on the disbursed loan must have created delinquency period 1");
+            assertEquals(1, wcLoanHelper.getBreachSchedule(loanId).size(), "COB on the disbursed loan must have created breach period 1");
 
             wcLoanHelper.undoDisbursal(loanId, WorkingCapitalLoanRequestBuilders.undoDisbursal());
             assertTrue(wcLoanHelper.getDelinquencyRangeSchedule(loanId).isEmpty(),
@@ -621,7 +623,7 @@ public class FeignWorkingCapitalLoanStatusHelpersTest extends FeignIntegrationTe
     }
 
     private Long createDelinquencyBucket() {
-        final PostDelinquencyRangeResponse range = DelinquencyRangesHelper.createRange(new DelinquencyRangeRequest()
+        final PostDelinquencyRangeResponse range = delinquencyHelper.createRange(new DelinquencyRangeRequest()
                 .classification(Utils.randomStringGenerator("DLQ_R_", 10)).minimumAgeDays(1).maximumAgeDays(30).locale("en"));
         assertNotNull(range, "delinquency range creation must succeed");
         final PostDelinquencyBucketResponse bucket = WorkingCapitalLoanDelinquencyRangeScheduleHelper

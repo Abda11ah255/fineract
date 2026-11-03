@@ -41,6 +41,30 @@ Feature: Working Capital Breach Schedule
       | periodNumber | fromDate   | toDate     | numberOfDays | minPaymentAmount | outstandingAmount | nearBreach | breach |
       | 1            | 2026-01-01 | 2026-02-28 | 59           | 110.70           | 110.70            | null       | null   |
 
+  @TestRailId:C111072
+  Scenario: Verify working capital loan breach schedule override after undo disbursement and following disbursement with new amounts
+    When Admin sets the business date to "01 January 2026"
+    And Admin creates a client with random data
+    And Admin creates a new Working Capital Loan Product with breachId and overrides enabled
+    And Admin creates a working capital loan using created product with the following data:
+      | submittedOnDate | expectedDisbursementDate | principalAmount | totalPaymentVolume | periodPaymentRate | discount |
+      | 01 January 2026 | 01 January 2026          | 9000            | 100000             | 18                | 800      |
+    And Admin successfully approves the working capital loan on "01 January 2026" with "9000" amount and "800" discount amount and expected disbursement date on "01 January 2026"
+    When Admin successfully disburse the Working Capital loan on "01 January 2026" with "9000" EUR transaction amount and "800" discount amount
+    And Admin runs inline COB job for Working Capital Loan by loanId
+    Then Working Capital loan breach schedule has the following data:
+      | periodNumber | fromDate   | toDate     | numberOfDays | minPaymentAmount | outstandingAmount | nearBreach | breach |
+      | 1            | 2026-01-01 | 2026-02-28 | 59           | 120.54           | 120.54            | null       | null   |
+# --- undo disbursement --- #
+    Then Admin successfully undo Working Capital disbursal
+    Then Working Capital loan status will be "APPROVED"
+    And Admin successfully disburse the Working Capital loan on "01 January 2026" with "9000" EUR transaction amount and "500" discount amount
+    And Admin runs inline COB job for Working Capital Loan by loanId
+    Then Working Capital loan breach schedule has the following data:
+      | periodNumber | fromDate   | toDate     | numberOfDays | minPaymentAmount | outstandingAmount | nearBreach | breach |
+      | 1            | 2026-01-01 | 2026-02-28 | 59           | 116.85           | 116.85            | null       | null   |
+    Then Admin closes the Working Capital loan with all obligations met with a full repayment on "01 January 2026"
+
   @TestRailId:C74542
   Scenario: Verify working capital loan breach schedule - last day of 1st period - no evaluation yet
     When Admin sets the business date to "01 January 2026"
@@ -654,3 +678,18 @@ Feature: Working Capital Breach Schedule
       | 10           | 2026-03-08 | 2026-03-14 | 7            | 900.00           | 0.00              | null       | false  |
       | 11           | 2026-03-15 | 2026-03-21 | 7            | 900.00           | 0.00              | null       | false  |
       | 12           | 2026-03-22 | 2026-03-28 | 7            | 0.00             | 0.00              | null       | false  |
+    When Customer adjust "2"th "REPAYMENT" transaction made on "21 March 2026" on Working Capital loan with amount "60" and date "23 March 2026"
+    Then Working Capital loan breach schedule has the following data:
+      | periodNumber | fromDate   | toDate     | numberOfDays | minPaymentAmount | outstandingAmount | nearBreach | breach |
+      | 1            | 2026-01-01 | 2026-01-10 | 10           | 900.00           | 0.00              | null       | false  |
+      | 2            | 2026-01-11 | 2026-01-17 | 7            | 900.00           | 0.00              | null       | false  |
+      | 3            | 2026-01-18 | 2026-01-24 | 7            | 900.00           | 0.00              | null       | false  |
+      | 4            | 2026-01-25 | 2026-01-31 | 7            | 900.00           | 0.00              | null       | false  |
+      | 5            | 2026-02-01 | 2026-02-07 | 7            | 900.00           | 0.00              | null       | false  |
+      | 6            | 2026-02-08 | 2026-02-14 | 7            | 900.00           | 0.00              | null       | false  |
+      | 7            | 2026-02-15 | 2026-02-21 | 7            | 900.00           | 0.00              | null       | false  |
+      | 8            | 2026-02-22 | 2026-02-28 | 7            | 900.00           | 0.00              | null       | false  |
+      | 9            | 2026-03-01 | 2026-03-07 | 7            | 900.00           | 0.00              | null       | false  |
+      | 10           | 2026-03-08 | 2026-03-14 | 7            | 900.00           | 0.00              | null       | false  |
+      | 11           | 2026-03-15 | 2026-03-21 | 7            | 900.00           | 0.00              | null       | false  |
+      | 12           | 2026-03-22 | 2026-03-28 | 7            | 100.00           | 40.00             | null       | null   |

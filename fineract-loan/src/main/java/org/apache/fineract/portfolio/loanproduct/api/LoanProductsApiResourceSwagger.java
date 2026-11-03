@@ -118,6 +118,11 @@ public final class LoanProductsApiResourceSwagger {
         public Double maxInterestRatePerPeriod;
         @Schema(example = "1")
         public Integer repaymentEvery;
+        @Schema(example = "10", description = "First due day of the month of a semi-monthly product, between 1 and 27.")
+        public Integer firstRepaymentDayOfMonth;
+        @Schema(example = "25", description = "Second due day of the month of a semi-monthly product, between 2 and 31 and "
+                + "greater than the first one. A day the month lacks falls on its last day, so 31 is the last day of every month.")
+        public Integer secondRepaymentDayOfMonth;
         @Schema(example = "5.5")
         public BigDecimal fixedPrincipalPercentagePerInstallment;
         @Schema(example = "true")
@@ -146,6 +151,18 @@ public final class LoanProductsApiResourceSwagger {
         public List<CreditAllocationData> creditAllocation;
         @Schema(example = "false")
         public Boolean isLinkedToFloatingInterestRates;
+        @Schema(example = "1", description = "The floating rate the product follows, when isLinkedToFloatingInterestRates is true")
+        public Long floatingRatesId;
+        @Schema(example = "0.0")
+        public BigDecimal interestRateDifferential;
+        @Schema(example = "true")
+        public Boolean isFloatingInterestRateCalculationAllowed;
+        @Schema(example = "0.0")
+        public BigDecimal minDifferentialLendingRate;
+        @Schema(example = "0.0")
+        public BigDecimal defaultDifferentialLendingRate;
+        @Schema(example = "50.0")
+        public BigDecimal maxDifferentialLendingRate;
         @Schema(example = "false")
         public Boolean allowVariableInstallments;
         @Schema(example = "0", description = "Minimum days between two installments of a variable installment loan")
@@ -174,6 +191,8 @@ public final class LoanProductsApiResourceSwagger {
         public Integer daysInYearType;
         @Schema(example = "FULL_LEAP_YEAR")
         public String daysInYearCustomStrategy;
+        @Schema(example = "LAST_DAY_OF_MONTH", allowableValues = { "LAST_DAY_OF_MONTH", "FIRST_DAY_OF_NEXT_MONTH" })
+        public String monthEndDueDateStrategy;
         @Schema(example = "true")
         public Boolean allowPartialPeriodInterestCalculation;
         @Schema(example = "179")
@@ -496,7 +515,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "repaymentFrequency.periodFrequencyType.days")
             public String code;
             @Schema(example = "Days")
-            public String description;
+            public String value;
         }
 
         static final class GetLoanProductsInterestRateFrequencyType {
@@ -508,7 +527,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "interestRateFrequency.periodFrequencyType.years")
             public String code;
             @Schema(example = "Per year")
-            public String description;
+            public String value;
         }
 
         static final class GetLoanProductsAmortizationType {
@@ -520,7 +539,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "amortizationType.equal.installments")
             public String code;
             @Schema(example = "Equal installments")
-            public String description;
+            public String value;
         }
 
         static final class GetLoanProductsInterestType {
@@ -532,7 +551,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "interestType.flat")
             public String code;
             @Schema(example = "Flat")
-            public String description;
+            public String value;
         }
 
         static final class GetLoansProductsInterestCalculationPeriodType {
@@ -544,7 +563,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "interestCalculationPeriodType.same.as.repayment.period")
             public String code;
             @Schema(example = "Same as repayment period")
-            public String description;
+            public String value;
         }
 
         static final class GetLoanProductsDaysInYearCustomStrategy {
@@ -691,6 +710,11 @@ public final class LoanProductsApiResourceSwagger {
         public Integer maxNumberOfRepayments;
         @Schema(example = "7")
         public Integer repaymentEvery;
+        @Schema(example = "10", description = "First due day of the month of a semi-monthly product, between 1 and 27.")
+        public Integer firstRepaymentDayOfMonth;
+        @Schema(example = "25", description = "Second due day of the month of a semi-monthly product, between 2 and 31 and "
+                + "greater than the first one. A day the month lacks falls on its last day, so 31 is the last day of every month.")
+        public Integer secondRepaymentDayOfMonth;
         public GetLoanProductsRepaymentFrequencyType repaymentFrequencyType;
         @Schema(example = "10")
         public Integer fixedLength;
@@ -717,6 +741,7 @@ public final class LoanProductsApiResourceSwagger {
         public GetLoanProductsDaysInMonthType daysInMonthType;
         public GetLoanProductsDaysInYearType daysInYearType;
         public GetLoanProductsDaysInYearCustomStrategy daysInYearCustomStrategy;
+        public StringEnumOptionData monthEndDueDateStrategy;
         @Schema(example = "true")
         public Boolean isInterestRecalculationEnabled;
         public GetLoanProductsInterestRecalculationData interestRecalculationData;
@@ -806,7 +831,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "interestType.declining.balance")
             public String code;
             @Schema(example = "Declining Balance")
-            public String description;
+            public String value;
         }
 
         static final class GetLoanProductsAccountingRule {
@@ -1155,6 +1180,8 @@ public final class LoanProductsApiResourceSwagger {
         public GetLoanProductsDaysInMonthType daysInMonthType;
         public GetLoanProductsDaysInYearType daysInYearType;
         public StringEnumOptionData daysInYearCustomStrategy;
+        public StringEnumOptionData monthEndDueDateStrategy;
+        public List<StringEnumOptionData> monthEndDueDateStrategyOptions;
         @Schema(example = "false")
         public Boolean isInterestRecalculationEnabled;
         public GetLoanProductsInterestRecalculationTemplateData interestRecalculationData;
@@ -1236,7 +1263,7 @@ public final class LoanProductsApiResourceSwagger {
             @Schema(example = "interestRateFrequency.periodFrequencyType.months")
             public String code;
             @Schema(example = "Per month")
-            public String description;
+            public String value;
         }
 
         static final class GetLoanProductsRepaymentStartDateType {
@@ -1443,6 +1470,11 @@ public final class LoanProductsApiResourceSwagger {
         public Integer maxNumberOfRepayments;
         @Schema(example = "7")
         public Integer repaymentEvery;
+        @Schema(example = "10", description = "First due day of the month of a semi-monthly product, between 1 and 27.")
+        public Integer firstRepaymentDayOfMonth;
+        @Schema(example = "25", description = "Second due day of the month of a semi-monthly product, between 2 and 31 and "
+                + "greater than the first one. A day the month lacks falls on its last day, so 31 is the last day of every month.")
+        public Integer secondRepaymentDayOfMonth;
         public GetLoanProductsResponse.GetLoanProductsRepaymentFrequencyType repaymentFrequencyType;
         @Schema(example = "10")
         public Integer fixedLength;
@@ -1496,6 +1528,7 @@ public final class LoanProductsApiResourceSwagger {
         public GetLoanProductsDaysInMonthType daysInMonthType;
         public GetLoanProductsDaysInYearType daysInYearType;
         public StringEnumOptionData daysInYearCustomStrategy;
+        public StringEnumOptionData monthEndDueDateStrategy;
         @Schema(example = "false")
         public Boolean canUseForTopup;
         public GetLoanAccountingMappings accountingMappings;
@@ -1645,6 +1678,11 @@ public final class LoanProductsApiResourceSwagger {
         public Double maxInterestRatePerPeriod;
         @Schema(example = "1")
         public Integer repaymentEvery;
+        @Schema(example = "10", description = "First due day of the month of a semi-monthly product, between 1 and 27.")
+        public Integer firstRepaymentDayOfMonth;
+        @Schema(example = "25", description = "Second due day of the month of a semi-monthly product, between 2 and 31 and "
+                + "greater than the first one. A day the month lacks falls on its last day, so 31 is the last day of every month.")
+        public Integer secondRepaymentDayOfMonth;
         @Schema(example = "5.5")
         public BigDecimal fixedPrincipalPercentagePerInstallment;
         @Schema(example = "true")
@@ -1691,6 +1729,8 @@ public final class LoanProductsApiResourceSwagger {
         public Long daysInYearType;
         @Schema(example = "FULL_LEAP_YEAR")
         public String daysInYearCustomStrategy;
+        @Schema(example = "LAST_DAY_OF_MONTH", allowableValues = { "LAST_DAY_OF_MONTH", "FIRST_DAY_OF_NEXT_MONTH" })
+        public String monthEndDueDateStrategy;
         @Schema(example = "true")
         public Boolean allowPartialPeriodInterestCalculation;
         @Schema(example = "179")

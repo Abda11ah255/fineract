@@ -41,7 +41,6 @@ dependencies {
     implementation 'org.springframework:spring-test'
     testImplementation 'org.springframework:spring-jms'
 
-    testImplementation 'com.squareup.retrofit2:retrofit'
     testImplementation 'org.apache.httpcomponents:httpclient'
     testImplementation 'org.apache.commons:commons-lang3'
     testImplementation 'com.google.guava:guava'
@@ -94,7 +93,6 @@ tasks.named('test') {
 }
 
 tasks.named('cucumber') {
-    dependsOn 'spotlessCheck'
     finalizedBy 'allureReport'
 }
 

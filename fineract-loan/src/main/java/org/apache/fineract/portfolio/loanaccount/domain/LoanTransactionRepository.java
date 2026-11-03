@@ -291,6 +291,21 @@ public interface LoanTransactionRepository extends JpaRepository<LoanTransaction
 
     // (0 - x) instead of -x: avoids EclipseLink concurrent unary-negation race in ArgumentListFunctionExpression
     @Query("""
+            SELECT COALESCE(SUM(CASE WHEN lt.typeOf = org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.ACCRUAL_ADJUSTMENT THEN (0 - lcpb.amount)
+                 ELSE lcpb.amount END), 0)
+            FROM LoanChargePaidBy lcpb
+            JOIN lcpb.loanTransaction lt
+            WHERE lcpb.loanCharge = :loanCharge
+                AND lt.reversed = false
+                AND lt.id < :transactionId
+                AND lt.typeOf IN :types
+                AND lcpb.amount > 0
+            """)
+    BigDecimal findChargeAmountPaidByEarlierTransactions(@Param("loanCharge") LoanCharge loanCharge,
+            @Param("transactionId") Long transactionId, @Param("types") Set<LoanTransactionType> types);
+
+    // (0 - x) instead of -x: avoids EclipseLink concurrent unary-negation race in ArgumentListFunctionExpression
+    @Query("""
             SELECT COALESCE(SUM(CASE WHEN lt.typeOf = org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.ACCRUAL THEN lcpb.amount
                  WHEN lt.typeOf = org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.ACCRUAL_ADJUSTMENT THEN (0 - lcpb.amount)
                  ELSE 0 END), 0)
@@ -458,20 +473,12 @@ public interface LoanTransactionRepository extends JpaRepository<LoanTransaction
                     org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.REAGE,
                     org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.CAPITALIZED_INCOME_AMORTIZATION,
                     org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.CONTRACT_TERMINATION,
+                    org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.LOAN_WITHDRAWAL,
                     org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.CAPITALIZED_INCOME_AMORTIZATION_ADJUSTMENT
                 )
             ORDER BY lt.dateOf, lt.createdDate, lt.id
             """)
     List<LoanTransaction> findNonReversedMonetaryTransactionsByLoan(@Param("loan") Loan loan);
-
-    @Query("""
-            SELECT COALESCE(SUM(lt.amount), 0)
-            FROM LoanTransaction lt
-            WHERE lt.loan = :loan
-                AND lt.reversed = false
-                AND lt.typeOf = org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.RECOVERY_REPAYMENT
-            """)
-    BigDecimal calculateTotalRecoveryPaymentAmount(@Param("loan") Loan loan);
 
     @Query("""
             SELECT CASE WHEN COUNT(lt) > 0 THEN true ELSE false END

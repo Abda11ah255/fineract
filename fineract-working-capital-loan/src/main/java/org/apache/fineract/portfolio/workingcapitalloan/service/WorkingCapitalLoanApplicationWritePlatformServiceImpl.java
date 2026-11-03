@@ -30,6 +30,7 @@ import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResultBuilder;
 import org.apache.fineract.infrastructure.dataqueries.data.EntityTables;
 import org.apache.fineract.infrastructure.dataqueries.data.StatusEnum;
+import org.apache.fineract.infrastructure.dataqueries.service.DatatableWriteService;
 import org.apache.fineract.infrastructure.dataqueries.service.EntityDatatableChecksWritePlatformService;
 import org.apache.fineract.infrastructure.event.business.domain.workingcapitalloan.loan.WorkingCapitalLoanApplicationModifiedBusinessEvent;
 import org.apache.fineract.infrastructure.event.business.domain.workingcapitalloan.loan.WorkingCapitalLoanCreatedBusinessEvent;
@@ -61,13 +62,14 @@ public class WorkingCapitalLoanApplicationWritePlatformServiceImpl implements Wo
     private final Optional<LoanOriginatorLinkingService> loanOriginatorLinkingService;
     private final EntityDatatableChecksWritePlatformService entityDatatableChecksWritePlatformService;
     private final BusinessEventNotifierService businessEventNotifierService;
+    private final DatatableWriteService datatableWriteService;
 
     public WorkingCapitalLoanApplicationWritePlatformServiceImpl(WorkingCapitalLoanApplicationDataValidator validator,
             WorkingCapitalLoanRepository repository, WorkingCapitalLoanAssembler assembler, WorkingCapitalLoanNoteRepository noteRepository,
             ProjectedAmortizationLoanModelRepository projectedAmortizationLoanModelRepository,
             @Qualifier("workingCapitalLoanOriginatorLinkingServiceImpl") Optional<LoanOriginatorLinkingService> loanOriginatorLinkingService,
             EntityDatatableChecksWritePlatformService entityDatatableChecksWritePlatformService,
-            BusinessEventNotifierService businessEventNotifierService) {
+            BusinessEventNotifierService businessEventNotifierService, DatatableWriteService datatableWriteService) {
         this.validator = validator;
         this.repository = repository;
         this.assembler = assembler;
@@ -76,17 +78,21 @@ public class WorkingCapitalLoanApplicationWritePlatformServiceImpl implements Wo
         this.loanOriginatorLinkingService = loanOriginatorLinkingService;
         this.entityDatatableChecksWritePlatformService = entityDatatableChecksWritePlatformService;
         this.businessEventNotifierService = businessEventNotifierService;
+        this.datatableWriteService = datatableWriteService;
     }
 
     @Transactional
     @Override
     public CommandProcessingResult submitApplication(final JsonCommand command) {
+        this.validator.validateForCreate(command);
+        final WorkingCapitalLoan loan = this.assembler.assembleFrom(command);
         try {
-            this.validator.validateForCreate(command);
-            final WorkingCapitalLoan loan = this.assembler.assembleFrom(command);
+            // The generated account number is built from the IDENTITY id, so it can only be set after the INSERT.
+            // Until then account_no is NULL, which the unique index lets concurrent creates insert without waiting.
             final WorkingCapitalLoan saved = this.repository.saveAndFlush(loan);
-            this.assembler.accountNumberGeneration(command, saved);
-            this.repository.saveAndFlush(saved);
+            this.assembler.accountNumberGeneration(saved);
+            // Flush here so a duplicate generated number is reported via handleDataIntegrityIssues below
+            this.repository.flush();
             final String submittedOnNote = command.stringValueOfParameterNamed(WorkingCapitalLoanConstants.submittedOnNoteParameterName);
             createNote(submittedOnNote, saved);
             saveDatatablesIfProvided(command, saved);
@@ -103,11 +109,11 @@ public class WorkingCapitalLoanApplicationWritePlatformServiceImpl implements Wo
                     .withLoanId(saved.getId()) //
                     .build();
         } catch (final JpaSystemException | DataIntegrityViolationException dve) {
-            this.validator.handleDataIntegrityIssues(command, dve.getMostSpecificCause(), dve);
+            this.validator.handleDataIntegrityIssues(command, loan.getAccountNumber(), dve.getMostSpecificCause(), dve);
             return CommandProcessingResult.empty();
         } catch (final PersistenceException dve) {
             Throwable throwable = ExceptionUtils.getRootCause(dve.getCause());
-            this.validator.handleDataIntegrityIssues(command, throwable, dve);
+            this.validator.handleDataIntegrityIssues(command, loan.getAccountNumber(), throwable, dve);
             return CommandProcessingResult.empty();
         }
     }
@@ -157,6 +163,8 @@ public class WorkingCapitalLoanApplicationWritePlatformServiceImpl implements Wo
         final List<WorkingCapitalLoanNote> relatedNotes = this.noteRepository.findByWcLoanId(loan.getId());
         this.noteRepository.deleteAllInBatch(relatedNotes);
         projectedAmortizationLoanModelRepository.findByLoanId(loan.getId()).ifPresent(projectedAmortizationLoanModelRepository::delete);
+        // a datatable entry references the loan, so it goes first
+        this.datatableWriteService.deleteDatatableEntriesOfEntity(EntityTables.WC_LOAN, loan.getId());
         this.repository.delete(loan);
 
         return new CommandProcessingResultBuilder() //

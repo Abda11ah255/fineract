@@ -82,37 +82,44 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
         for (final PostingPeriod interestPostingPeriod : postingPeriods) {
             final LocalDate interestPostingTransactionDate = interestPostingPeriod.dateOfPostingTransaction();
             final Money interestEarnedToBePostedForPeriod = interestPostingPeriod.getInterestEarned();
-            final Boolean isOverdraft = interestPostingPeriod.isOverdraftInterest();
+            final boolean isOverdraft = interestPostingPeriod.isOverdraftInterest();
 
             if (!DateUtils.isAfter(interestPostingTransactionDate, interestPostingUpToDate)) {
                 interestPostedToDate = interestPostedToDate.plus(interestEarnedToBePostedForPeriod);
                 SavingsAccountTransactionData postingTransaction = null;
-                if (this.depositAccountType(savingsAccountData) == DepositAccountType.SAVINGS_DEPOSIT
-                        && savingsAccountData.isAllowOverdraft()) {
+                // Products mapped to an interest receivable GL account build two posting periods per interval, one
+                // for the positive balance days and one for the overdraft days, sharing the posting date (see
+                // calculateInterestUsing). Only there does the lookup have to tell the two apart. Anywhere else a
+                // single period is posted per date, so the lookup must match either transaction type: an overdraft
+                // interest posting searched as a regular interest posting would never be matched and would be
+                // duplicated on every run, and a posting whose interest later changes sign has to be found so it can
+                // be reversed and replaced.
+                final boolean postsTypedPeriods = this.depositAccountType(savingsAccountData) == DepositAccountType.SAVINGS_DEPOSIT
+                        && savingsAccountData.isAllowOverdraft() && savingsAccountData.hasInterestReceivableMapping();
+                if (postsTypedPeriods) {
                     postingTransaction = findInterestPostingTransactionForInterest(interestPostingTransactionDate, savingsAccountData,
                             isOverdraft);
                 } else {
                     postingTransaction = findInterestPostingTransactionFor(interestPostingTransactionDate, savingsAccountData);
                 }
 
+                // With two periods sharing one posting date, one of them regularly earns zero. A zero amount is
+                // posted as a regular interest posting whatever the period type, so the typed lookup of a zero earning
+                // overdraft period would never match it and would post it again on every run. Products with a single
+                // period per date keep posting zero amounts as before.
+                final boolean hasInterestToPost = !postsTypedPeriods || !interestEarnedToBePostedForPeriod.isZero();
+
                 if (postingTransaction == null) {
-                    SavingsAccountTransactionData newPostingTransaction;
-                    if (interestEarnedToBePostedForPeriod.isGreaterThanOrEqualTo(Money.zero(savingsAccountData.getCurrency()))) {
-                        newPostingTransaction = SavingsAccountTransactionData.interestPosting(savingsAccountData,
-                                interestPostingTransactionDate, interestEarnedToBePostedForPeriod, interestPostingPeriod.isUserPosting());
-                    } else {
-                        newPostingTransaction = SavingsAccountTransactionData.overdraftInterest(savingsAccountData,
-                                interestPostingTransactionDate, interestEarnedToBePostedForPeriod.negated(),
-                                interestPostingPeriod.isUserPosting(), isOverdraft);
-                    }
+                    if (hasInterestToPost) {
+                        savingsAccountData.updateTransactions(newPostingTransaction(savingsAccountData, interestPostingPeriod,
+                                interestPostingTransactionDate, interestEarnedToBePostedForPeriod, isOverdraft));
 
-                    savingsAccountData.updateTransactions(newPostingTransaction);
-
-                    if (applyWithHoldTax) {
-                        createWithHoldTransaction(interestEarnedToBePostedForPeriod.getAmount(), interestPostingTransactionDate,
-                                savingsAccountData);
+                        if (applyWithHoldTax) {
+                            createWithHoldTransaction(interestEarnedToBePostedForPeriod.getAmount(), interestPostingTransactionDate,
+                                    savingsAccountData);
+                        }
+                        recalucateDailyBalanceDetails = true;
                     }
-                    recalucateDailyBalanceDetails = true;
                 } else {
                     boolean correctionRequired = false;
                     if (postingTransaction.isInterestPostingAndNotReversed()) {
@@ -131,22 +138,16 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
                             withholdTransaction.reverse();
                             applyWithHoldTaxForOldTransaction = true;
                         }
-                        SavingsAccountTransactionData newPostingTransaction;
-                        if (interestEarnedToBePostedForPeriod.isGreaterThanOrEqualTo(Money.zero(savingsAccountData.getCurrency()))) {
-                            newPostingTransaction = SavingsAccountTransactionData.interestPosting(savingsAccountData,
-                                    interestPostingTransactionDate, interestEarnedToBePostedForPeriod,
-                                    interestPostingPeriod.isUserPosting());
-                        } else {
-                            newPostingTransaction = SavingsAccountTransactionData.overdraftInterest(savingsAccountData,
-                                    interestPostingTransactionDate, interestEarnedToBePostedForPeriod.negated(),
-                                    interestPostingPeriod.isUserPosting(), isOverdraft);
-                        }
 
-                        savingsAccountData.updateTransactions(newPostingTransaction);
+                        // The period no longer earns anything, so the reversal above is the whole correction.
+                        if (hasInterestToPost) {
+                            savingsAccountData.updateTransactions(newPostingTransaction(savingsAccountData, interestPostingPeriod,
+                                    interestPostingTransactionDate, interestEarnedToBePostedForPeriod, isOverdraft));
 
-                        if (applyWithHoldTaxForOldTransaction) {
-                            createWithHoldTransaction(interestEarnedToBePostedForPeriod.getAmount(), interestPostingTransactionDate,
-                                    savingsAccountData);
+                            if (applyWithHoldTaxForOldTransaction) {
+                                createWithHoldTransaction(interestEarnedToBePostedForPeriod.getAmount(), interestPostingTransactionDate,
+                                        savingsAccountData);
+                            }
                         }
                         recalucateDailyBalanceDetails = true;
                     }
@@ -186,6 +187,17 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
         return savingsAccountData;
     }
 
+    private SavingsAccountTransactionData newPostingTransaction(final SavingsAccountData savingsAccountData,
+            final PostingPeriod interestPostingPeriod, final LocalDate interestPostingTransactionDate, final Money interestEarned,
+            final boolean isOverdraft) {
+        if (interestEarned.isGreaterThanOrEqualTo(Money.zero(savingsAccountData.getCurrency()))) {
+            return SavingsAccountTransactionData.interestPosting(savingsAccountData, interestPostingTransactionDate, interestEarned,
+                    interestPostingPeriod.isUserPosting());
+        }
+        return SavingsAccountTransactionData.overdraftInterest(savingsAccountData, interestPostingTransactionDate, interestEarned.negated(),
+                interestPostingPeriod.isUserPosting(), isOverdraft);
+    }
+
     protected SavingsAccountTransactionData findTransactionFor(final LocalDate postingDate,
             final List<SavingsAccountTransactionData> transactions) {
         SavingsAccountTransactionData transaction = null;
@@ -205,17 +217,25 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
             final Collection<Long> interestPostTransactions, final boolean isInterestTransfer, final Money minBalanceForInterestCalculation,
             final boolean isSavingsInterestPostingAtCurrentPeriodEnd, final BigDecimal overdraftInterestRateAsFraction,
             final Money minOverdraftForInterestCalculation, final boolean isUserPosting, final Integer financialYearBeginningMonth,
-            final boolean allowOverdraft, final List<PostingPeriod> allPostingPeriods, Boolean isOverdraftTransacction) {
+            final boolean allowOverdraft, final List<PostingPeriod> allPostingPeriods, Boolean isOverdraftTransacction,
+            final boolean carryForwardBalanceWithoutTransactions) {
 
-        if (txs == null || txs.isEmpty()) {
+        final List<SavingsAccountTransactionData> transactions = txs == null ? Collections.emptyList() : txs;
+        // When backdated transactions before the last interest posting are not allowed, only the transactions on or
+        // after interestPostedTillDate are loaded and the earlier balance is carried in as periodStartingBalance. An
+        // account without activity since its last posting then has no transactions here but still has a balance that
+        // earns interest, so the period must not be skipped: PostingPeriod falls back to one end-of-day balance
+        // spanning the whole period. The overdraft split lists are filtered per period, so for them an empty list
+        // still means the period does not apply.
+        if (transactions.isEmpty() && (!carryForwardBalanceWithoutTransactions || periodStartingBalance.isZero())) {
             return periodStartingBalance;
         }
 
-        final PostingPeriod postingPeriod = PostingPeriod.createFromDTO(periodInterval, periodStartingBalance, txs, monetaryCurrency,
-                compoundingPeriodType, interestCalculationType, interestRateAsFraction, daysInYear, upToInterestCalculationDate,
-                interestPostTransactions, isInterestTransfer, minBalanceForInterestCalculation, isSavingsInterestPostingAtCurrentPeriodEnd,
-                overdraftInterestRateAsFraction, minOverdraftForInterestCalculation, isUserPosting, financialYearBeginningMonth,
-                allowOverdraft);
+        final PostingPeriod postingPeriod = PostingPeriod.createFromDTO(periodInterval, periodStartingBalance, transactions,
+                monetaryCurrency, compoundingPeriodType, interestCalculationType, interestRateAsFraction, daysInYear,
+                upToInterestCalculationDate, interestPostTransactions, isInterestTransfer, minBalanceForInterestCalculation,
+                isSavingsInterestPostingAtCurrentPeriodEnd, overdraftInterestRateAsFraction, minOverdraftForInterestCalculation,
+                isUserPosting, financialYearBeginningMonth, allowOverdraft);
 
         periodStartingBalance = postingPeriod.closingBalance();
         postingPeriod.setOverdraftInterest(isOverdraftTransacction);
@@ -306,7 +326,7 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
             if (postedAsOnDates.contains(periodInterval.endDate().plusDays(1))) {
                 isUserPosting = true;
             }
-            if (savingsAccountData.isAllowOverdraft() && !MathUtil.isZero(savingsAccountData.getGlAccountIdForInterestReceivable())) {
+            if (savingsAccountData.isAllowOverdraft() && savingsAccountData.hasInterestReceivableMapping()) {
 
                 List<SavingsAccountTransactionData> overdraftTxs = listForOverdraft(savingsAccountData, periodInterval);
                 List<SavingsAccountTransactionData> interestPostingTxs = listForInterestPosting(savingsAccountData, periodInterval,
@@ -323,14 +343,14 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
                         upToInterestCalculationDate, interestPostTransactions, isInterestTransfer, minBalanceForInterestCalculation,
                         isSavingsInterestPostingAtCurrentPeriodEnd, overdraftInterestRateAsFraction, minOverdraftForInterestCalculation,
                         isUserPosting, financialYearBeginningMonth, savingsAccountData.isAllowOverdraft(), allPostingPeriods,
-                        isOverdraftAccountType ? true : false);
+                        isOverdraftAccountType ? true : false, false);
 
                 periodStartingBalance = appendPostingPeriodIfAny(periodInterval, periodStartingBalance, secondaryInterestPublication,
                         monetaryCurrency, compoundingPeriodType, interestCalculationType, interestRateAsFraction, daysInYearType.getValue(),
                         upToInterestCalculationDate, interestPostTransactions, isInterestTransfer, minBalanceForInterestCalculation,
                         isSavingsInterestPostingAtCurrentPeriodEnd, overdraftInterestRateAsFraction, minOverdraftForInterestCalculation,
                         isUserPosting, financialYearBeginningMonth, savingsAccountData.isAllowOverdraft(), allPostingPeriods,
-                        isOverdraftAccountType ? false : true);
+                        isOverdraftAccountType ? false : true, false);
 
             } else {
                 periodStartingBalance = appendPostingPeriodIfAny(periodInterval, periodStartingBalance,
@@ -338,7 +358,7 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
                         interestCalculationType, interestRateAsFraction, daysInYearType.getValue(), upToInterestCalculationDate,
                         interestPostTransactions, isInterestTransfer, minBalanceForInterestCalculation,
                         isSavingsInterestPostingAtCurrentPeriodEnd, overdraftInterestRateAsFraction, minOverdraftForInterestCalculation,
-                        isUserPosting, financialYearBeginningMonth, savingsAccountData.isAllowOverdraft(), allPostingPeriods, false);
+                        isUserPosting, financialYearBeginningMonth, savingsAccountData.isAllowOverdraft(), allPostingPeriods, false, true);
             }
         }
 
@@ -514,7 +534,7 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
             } else {
                 Money overdraftAmount = Money.zero(savingsAccountData.getCurrency());
                 Money transactionAmount = Money.zero(savingsAccountData.getCurrency());
-                if (transaction.isCredit() || transaction.isAmountRelease()) {
+                if (transaction.isCredit()) {
                     if (runningBalance.isLessThanZero()) {
                         Money diffAmount = Money.of(savingsAccountData.getCurrency(), transaction.getAmount()).plus(runningBalance);
                         if (diffAmount.isGreaterThanZero()) {
@@ -524,7 +544,7 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
                         }
                     }
                     transactionAmount = transactionAmount.plus(transaction.getAmount());
-                } else if (transaction.isDebit() || transaction.isAmountOnHold()) {
+                } else if (transaction.isDebit()) {
                     if (runningBalance.isLessThanZero()) {
                         overdraftAmount = Money.of(savingsAccountData.getCurrency(), transaction.getAmount());
                     }
@@ -536,7 +556,7 @@ public class SavingsAccountInterestPostingServiceImpl implements SavingsAccountI
                     transaction.updateRunningBalance(runningBalance);
                 }
                 // transaction.updateRunningBalance(runningBalance);
-                if (overdraftAmount.isZero() && runningBalance.isLessThanZero()) {
+                if (overdraftAmount.isZero() && runningBalance.isLessThanZero() && !transaction.isAmountOnHold()) {
                     overdraftAmount = overdraftAmount.plus(runningBalance.getAmount().negate());
                 }
                 if (transaction.getId() == null && overdraftAmount.isGreaterThanZero()) {

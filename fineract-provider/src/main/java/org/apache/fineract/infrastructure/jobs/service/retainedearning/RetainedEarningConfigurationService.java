@@ -18,6 +18,7 @@
  */
 package org.apache.fineract.infrastructure.jobs.service.retainedearning;
 
+import static org.apache.fineract.infrastructure.jobs.service.retainedearning.RetainedEarningJobConstant.TRIAL_BALANCE_SUMMARY_FOR_WORKING_CAPITAL_LOANS;
 import static org.apache.fineract.infrastructure.jobs.service.retainedearning.RetainedEarningJobConstant.TRIAL_BALANCE_SUMMARY_WITH_ASSET_OWNER;
 
 import java.time.LocalDate;
@@ -28,7 +29,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Job-specific configuration wrapper that isolates retained earning config access from the platform-wide
- * {@link ConfigurationDomainService}. Centralizes the fiscal year date calculation used by both the Reader and Writer.
+ * {@link ConfigurationDomainService}. Centralizes the fiscal year date calculation used by the job listener.
  */
 @Component
 @RequiredArgsConstructor
@@ -56,6 +57,11 @@ public class RetainedEarningConfigurationService {
     public String getReportName() {
         String configured = configurationDomainService.getRetainedEarningUsedByReportName();
         return configured != null ? configured : TRIAL_BALANCE_SUMMARY_WITH_ASSET_OWNER;
+    }
+
+    public String getWorkingCapitalReportName() {
+        String configured = configurationDomainService.getRetainedEarningWorkingCapitalUsedByReportName();
+        return configured != null ? configured : TRIAL_BALANCE_SUMMARY_FOR_WORKING_CAPITAL_LOANS;
     }
 
     public LocalDate getLastDayOfPreviousFiscalYear(LocalDate currentDate) {

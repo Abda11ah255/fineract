@@ -727,6 +727,10 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             } else {
                 postedAsOnDates = getManualPostingDates();
             }
+            if (isSavingsInterestPostingAtCurrentPeriodEnd) {
+                // With this configuration manual postings are dated on their period end, not on the day after it
+                postedAsOnDates.replaceAll(postedAsOnDate -> postedAsOnDate.plusDays(1));
+            }
             if (postInterestOnDate != null) {
                 postedAsOnDates.add(postInterestOnDate);
             }
@@ -899,7 +903,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             } else {
                 Money overdraftAmount = Money.zero(this.currency);
                 Money transactionAmount = Money.zero(this.currency);
-                if ((transaction.isCredit() || transaction.isAmountRelease())) {
+                if (transaction.isCredit()) {
                     if (runningBalance.isLessThanZero()) {
                         Money diffAmount = transaction.getAmount(this.currency).plus(runningBalance);
                         if (diffAmount.isGreaterThanZero()) {
@@ -909,7 +913,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
                         }
                     }
                     transactionAmount = transactionAmount.plus(transaction.getAmount(this.currency));
-                } else if (transaction.isDebit() || transaction.isAmountOnHold()) {
+                } else if (transaction.isDebit()) {
                     if (runningBalance.isLessThanZero()) {
                         overdraftAmount = transaction.getAmount(this.currency);
                     }
@@ -1048,7 +1052,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
         final Money amount = Money.of(this.currency, transactionDTO.getTransactionAmount());
 
         final SavingsAccountTransaction transaction = SavingsAccountTransaction.deposit(this, office(), transactionDTO.getPaymentDetail(),
-                transactionDTO.getTransactionDate(), amount, savingsAccountTransactionType, refNo);
+                transactionDTO.getTransactionDate(), transactionDTO.getTransactionTime(), amount, savingsAccountTransactionType, refNo);
 
         if (backdatedTxnsAllowedTill) {
             addTransactionToExisting(transaction);
@@ -1184,7 +1188,8 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
 
         final Money transactionAmountMoney = Money.of(this.currency, transactionDTO.getTransactionAmount());
         final SavingsAccountTransaction transaction = SavingsAccountTransaction.withdrawal(this, office(),
-                transactionDTO.getPaymentDetail(), transactionDTO.getTransactionDate(), transactionAmountMoney, refNo);
+                transactionDTO.getPaymentDetail(), transactionDTO.getTransactionDate(), transactionDTO.getTransactionTime(),
+                transactionAmountMoney, refNo);
 
         if (backdatedTxnsAllowedTill) {
             addTransactionToExisting(transaction);
@@ -1280,10 +1285,10 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             long completedDays;
 
             if (resetDate == null) {
-                completedDays = DAYS.between(DateUtils.getBusinessLocalDate(), this.activatedOnDate);
+                completedDays = DAYS.between(this.activatedOnDate, DateUtils.getBusinessLocalDate());
 
             } else {
-                completedDays = DAYS.between(DateUtils.getBusinessLocalDate(), resetDate);
+                completedDays = DAYS.between(resetDate, DateUtils.getBusinessLocalDate());
             }
 
             int totalDays = (int) completedDays;
@@ -1450,7 +1455,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
         if (!this.configurationDomainService.isForceWithdrawalOnSavingsAccountEnabled()) {
             return false;
         }
-        Long limit = this.configurationDomainService.retrieveForceWithdrawalOnSavingsAccountLimit();
+        Long limit = this.configurationDomainService.getForceWithdrawalOnSavingsAccountLimit();
         BigDecimal limitBd = BigDecimal.valueOf(limit);
         if (limitBd.compareTo(BigDecimal.ZERO) > 0) {
             limitBd = limitBd.negate();
@@ -2299,12 +2304,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             // undo charge
             final Set<SavingsAccountChargePaidBy> chargesPaidBy = transactionToUndo.getSavingsAccountChargesPaid();
             for (final SavingsAccountChargePaidBy savingsAccountChargePaidBy : chargesPaidBy) {
-                final SavingsAccountCharge chargeToUndo = savingsAccountChargePaidBy.getSavingsAccountCharge();
-                if (transactionToUndo.isChargeTransaction()) {
-                    chargeToUndo.undoPayment(this.getCurrency(), transactionToUndo.getAmount(this.getCurrency()));
-                } else if (transactionToUndo.isWaiveCharge()) {
-                    chargeToUndo.undoWaiver(this.getCurrency(), transactionToUndo.getAmount(this.getCurrency()));
-                }
+                undoChargeTransaction(transactionToUndo, savingsAccountChargePaidBy.getSavingsAccountCharge());
             }
         }
     }
@@ -2329,12 +2329,7 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             // undo charge
             final Set<SavingsAccountChargePaidBy> chargesPaidBy = transactionToUndo.getSavingsAccountChargesPaid();
             for (final SavingsAccountChargePaidBy savingsAccountChargePaidBy : chargesPaidBy) {
-                final SavingsAccountCharge chargeToUndo = savingsAccountChargePaidBy.getSavingsAccountCharge();
-                if (transactionToUndo.isChargeTransaction()) {
-                    chargeToUndo.undoPayment(this.getCurrency(), transactionToUndo.getAmount(this.currency));
-                } else if (transactionToUndo.isWaiveCharge()) {
-                    chargeToUndo.undoWaiver(this.getCurrency(), transactionToUndo.getAmount(this.currency));
-                }
+                undoChargeTransaction(transactionToUndo, savingsAccountChargePaidBy.getSavingsAccountCharge());
             }
         }
     }
@@ -2352,14 +2347,61 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             // undo charge
             final Set<SavingsAccountChargePaidBy> chargesPaidBy = transactionToUndo.getSavingsAccountChargesPaid();
             for (final SavingsAccountChargePaidBy savingsAccountChargePaidBy : chargesPaidBy) {
-                final SavingsAccountCharge chargeToUndo = savingsAccountChargePaidBy.getSavingsAccountCharge();
-                if (transactionToUndo.isChargeTransaction()) {
-                    chargeToUndo.undoPayment(this.getCurrency(), transactionToUndo.getAmount(this.currency));
-                } else if (transactionToUndo.isWaiveCharge()) {
-                    chargeToUndo.undoWaiver(this.getCurrency(), transactionToUndo.getAmount(this.currency));
+                undoChargeTransaction(transactionToUndo, savingsAccountChargePaidBy.getSavingsAccountCharge());
+            }
+        }
+    }
+
+    private void undoChargeTransaction(final SavingsAccountTransaction transactionToUndo, final SavingsAccountCharge chargeToUndo) {
+        final Money transactionAmount = transactionToUndo.getAmount(this.currency);
+        if (!chargeToUndo.isRecurringFee()) {
+            if (transactionToUndo.isChargeTransaction()) {
+                chargeToUndo.undoPayment(this.currency, transactionAmount);
+            } else if (transactionToUndo.isWaiveCharge()) {
+                chargeToUndo.undoWaiver(this.currency, transactionAmount);
+            }
+            return;
+        }
+
+        // A recurring fee only tracks its current cycle, so its payments and waivers can only be undone latest first
+        Money paidAfterwards = Money.zero(this.currency);
+        boolean waivedAfterwards = false;
+        for (final SavingsAccountTransaction transaction : this.transactions) {
+            if (transaction.isNotReversed() && transaction.isPaymentForCurrentCharge(chargeToUndo)
+                    && isMadeAfter(transaction, transactionToUndo)) {
+                if (transaction.isWaiveCharge()) {
+                    waivedAfterwards = true;
+                } else if (transaction.isChargeTransaction()) {
+                    paidAfterwards = paidAfterwards.plus(transaction.getAmount(this.currency));
                 }
             }
         }
+
+        final boolean undoableAlone;
+        if (transactionToUndo.isWaiveCharge()) {
+            undoableAlone = !waivedAfterwards && paidAfterwards.isZero();
+        } else {
+            undoableAlone = !waivedAfterwards && !chargeToUndo.isPaymentOfEarlierCycle(this.currency, paidAfterwards);
+        }
+        if (!undoableAlone) {
+            final List<ApiParameterError> dataValidationErrors = new ArrayList<>();
+            new DataValidatorBuilder(dataValidationErrors).resource(SAVINGS_ACCOUNT_RESOURCE_NAME).reset()
+                    .failWithCodeNoParameterAddedToErrorCode("transaction.undo.recurring.charge.has.later.transactions");
+            throw new PlatformApiDataValidationException(dataValidationErrors);
+        }
+
+        if (transactionToUndo.isChargeTransaction()) {
+            chargeToUndo.undoPayment(this.currency, transactionAmount, paidAfterwards);
+        } else if (transactionToUndo.isWaiveCharge()) {
+            chargeToUndo.undoWaiver(this.currency, transactionAmount);
+        }
+    }
+
+    private static boolean isMadeAfter(final SavingsAccountTransaction transaction, final SavingsAccountTransaction other) {
+        if (transaction == other || (transaction.getId() != null && transaction.getId().equals(other.getId()))) {
+            return false;
+        }
+        return transaction.getId() == null || (other.getId() != null && transaction.getId() > other.getId());
     }
 
     private LocalDate findLatestAnnualFeeTransactionDueDate() {
@@ -2722,6 +2764,9 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
         final PeriodFrequencyType lockinPeriodFrequencyType = PeriodFrequencyType.fromInt(this.lockinPeriodFrequencyType);
         switch (lockinPeriodFrequencyType) {
             case INVALID:
+                // SEMI_MONTHLY is a loan repayment frequency and is never offered as a savings lock-in period, so it
+                // leaves the account unlocked just like an unset frequency does.
+            case SEMI_MONTHLY:
             break;
             case DAYS:
                 lockedInUntilLocalDate = activationLocalDate.plusDays(this.lockinPeriodFrequency);
@@ -3072,6 +3117,11 @@ public class SavingsAccount extends AbstractAuditableWithUTCDateTimeCustom<Long>
             chargeTransaction = SavingsAccountTransaction.annualFee(this, office(), transactionDate, transactionAmount);
         } else {
             chargeTransaction = SavingsAccountTransaction.charge(this, office(), transactionDate, transactionAmount);
+        }
+        final TaxGroup chargeTaxGroup = savingsAccountCharge.getCharge().getTaxGroup();
+        if (chargeTaxGroup != null) {
+            SavingsAccountTransaction.updateTaxDetails(TaxUtils.splitTax(transactionAmount.getAmount(), transactionDate,
+                    chargeTaxGroup.getTaxGroupMappings(), transactionAmount.getAmount().scale()), chargeTransaction);
         }
 
         handleChargeTransactions(savingsAccountCharge, chargeTransaction, backdatedTxnsAllowedTill);

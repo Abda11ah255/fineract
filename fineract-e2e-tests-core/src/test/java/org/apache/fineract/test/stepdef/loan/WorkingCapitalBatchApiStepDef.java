@@ -35,6 +35,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -45,6 +46,7 @@ import org.apache.fineract.client.feign.FineractFeignClient;
 import org.apache.fineract.client.feign.util.CallFailedRuntimeException;
 import org.apache.fineract.client.models.BatchRequest;
 import org.apache.fineract.client.models.BatchResponse;
+import org.apache.fineract.client.models.ExecuteWorkingCapitalLoanTransactionCommandRequest;
 import org.apache.fineract.client.models.GetWorkingCapitalLoanTransactionIdResponse;
 import org.apache.fineract.client.models.GetWorkingCapitalLoansLoanIdResponse;
 import org.apache.fineract.client.models.Header;
@@ -102,6 +104,7 @@ public class WorkingCapitalBatchApiStepDef extends AbstractStepDef {
     private final WorkingCapitalLoanRequestFactory workingCapitalLoanRequestFactory;
     private final WorkingCapitalDelinquencyStepDef workingCapitalDelinquencyStepDef;
     private final WorkingCapitalBreachScheduleStepDef workingCapitalBreachScheduleStepDef;
+    private final WorkingCapitalLoanAccountStepDef workingCapitalLoanAccountStepDef;
 
     // Individual operation steps implementation
 
@@ -120,7 +123,7 @@ public class WorkingCapitalBatchApiStepDef extends AbstractStepDef {
     private void batchApiCreateWCLoanInternal(DataTable table, String externalId) throws IOException {
         final List<String> loanData = table.asLists().get(1);
         final Long clientId = extractClientId();
-        final Long productId = workingCapitalLoanProductResolver.resolve(DefaultWorkingCapitalLoanProduct.valueOf(loanData.get(0)));
+        final Long productId = workingCapitalLoanAccountStepDef.resolveLoanProductId(loanData.get(0));
 
         final PostWorkingCapitalLoansRequest request = workingCapitalLoanRequestFactory.defaultWorkingCapitalLoansRequest(clientId)
                 .productId(productId).submittedOnDate(loanData.get(1)).expectedDisbursementDate(loanData.get(2))
@@ -285,6 +288,39 @@ public class WorkingCapitalBatchApiStepDef extends AbstractStepDef {
         final String url = resolveLoanUrlForGet() + WCL_TRANSACTIONS_PATH + COMMAND_DISCOUNT_ADJUSTMENT;
         final BatchRequest batchRequest = buildBatchRequest(1L, null, url, BATCH_API_METHOD_POST, GSON.toJson(request));
         final List<BatchResponse> responses = handleBatchRequests(List.of(batchRequest), false);
+        testContext().set(TestContextKey.BATCH_API_CALL_RESPONSE, responses);
+    }
+
+    @When("Batch API adjusts by delta {string}th {string} transaction made on {string} on the working capital loan with amount {string}")
+    public void batchApiAdjustByDeltaNthWorkingCapitalLoanTransaction(final String nthItemStr, final String transactionType,
+            final String transactionDate, final String amount) throws IOException {
+        final Long loanId = getCreatedWCLoanId();
+        final TransactionType resolvedType = TransactionType.valueOf(transactionType.toUpperCase(Locale.ROOT).replace(' ', '_'));
+        final String expectedCode = "loanTransactionType." + resolvedType.getValue();
+        final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH);
+        final List<GetWorkingCapitalLoanTransactionIdResponse> transactions = ok(
+                () -> fineractFeignClient.workingCapitalLoanTransactions().retrieveWorkingCapitalLoanTransactionsById(loanId)).getContent();
+        final int nthItem = Integer.parseInt(nthItemStr) - 1;
+        final GetWorkingCapitalLoanTransactionIdResponse target = transactions.stream().filter(t -> {
+            if (t.getType() == null || !expectedCode.equals(t.getType().getCode())) {
+                return false;
+            }
+            assertThat(t.getTransactionDate()).as("transaction %s date", t.getId()).isNotNull();
+            return transactionDate.equals(formatter.format(t.getTransactionDate())) && !Boolean.TRUE.equals(t.getReversed());
+        }).toList().get(nthItem);
+
+        final ExecuteWorkingCapitalLoanTransactionCommandRequest request = new ExecuteWorkingCapitalLoanTransactionCommandRequest()
+                .locale(WorkingCapitalLoanRequestFactory.DEFAULT_LOCALE).dateFormat(WorkingCapitalLoanRequestFactory.DATE_FORMAT)
+                .transactionDate(transactionDate).transactionAmount(new BigDecimal(amount))
+                .reversalExternalId(Utils.randomStringGenerator("wcl-batch-adjust-rev-ext-id", 8))
+                .note("working capital transaction adjustment via batch");
+        final String url = resolveLoanUrlForGet() + WCL_TRANSACTIONS_PATH + "/" + target.getId() + "?command=adjust-by-delta";
+        final BatchRequest batchRequest = buildBatchRequest(1L, null, url, BATCH_API_METHOD_POST, GSON.toJson(request));
+        final List<BatchResponse> responses = handleBatchRequests(List.of(batchRequest), false);
+        assertThat(responses).as("batch adjust-by-delta responses").hasSize(1);
+        final BatchResponse response = responses.getFirst();
+        assertThat(response.getStatusCode()).as("batch adjust-by-delta status, body=%s", response.getBody()).isEqualTo(200);
+        assertThat(response.getBody()).as("batch adjust-by-delta body").contains("\"resourceId\"");
         testContext().set(TestContextKey.BATCH_API_CALL_RESPONSE, responses);
     }
 
@@ -909,28 +945,59 @@ public class WorkingCapitalBatchApiStepDef extends AbstractStepDef {
     public void verifyDelinquencyRangeScheduleViaBatchApi(final DataTable dataTable) {
         Long loanId = workingCapitalDelinquencyStepDef.extractLoanId();
         String url = WCL_BASE_URL + "/" + loanId + WCL_DELINQUENCY_RANGE_SCHEDULE_PATH;
-        BatchRequest request = buildBatchRequest(1L, null, url, BATCH_API_METHOD_GET, null);
+        List<BatchResponse> ok = handleBatchRequestByUrlForGetApi(url);
 
-        List<BatchResponse> ok = ok(() -> fineractFeignClient.batch().handleBatchRequests(List.of(request), false));
-        assertThat(ok).isNotNull();
-        assertThat(ok.get(0).getStatusCode()).isEqualTo(200);
         List<WorkingCapitalLoanDelinquencyRangeScheduleData> actualRangeSchedule = parseBatchResponse(ok, new TypeReference<>() {});
-
         workingCapitalDelinquencyStepDef.verifyDelinquencyRangeSchedule(actualRangeSchedule, dataTable);
+    }
+
+    @Then("Working Capital loan delinquency range schedule has no data via batch api")
+    public void verifyDelinquencyRangeScheduleIsEmpty() {
+        Long loanId = workingCapitalDelinquencyStepDef.extractLoanId();
+        String url = WCL_BASE_URL + "/" + loanId + WCL_DELINQUENCY_RANGE_SCHEDULE_PATH;
+
+        List<BatchResponse> ok = handleBatchRequestByUrlForGetApi(url);
+        List<WorkingCapitalLoanDelinquencyRangeScheduleData> actualRangeSchedule = parseBatchResponse(ok, new TypeReference<>() {});
+        assertThat(actualRangeSchedule).as("Range schedule should be empty when loan is not yet disbursed or approved").isEmpty();
     }
 
     @Then("Working Capital loan breach schedule has the following data via batch api:")
     public void verifyBreachScheduleViaBatchApi(final DataTable dataTable) {
         Long loanId = workingCapitalDelinquencyStepDef.extractLoanId();
         String url = WCL_BASE_URL + "/" + loanId + WCL_BREACH_SCHEDULE_PATH;
-        BatchRequest request = buildBatchRequest(1L, null, url, BATCH_API_METHOD_GET, null);
+        List<BatchResponse> ok = handleBatchRequestByUrlForGetApi(url);
 
-        List<BatchResponse> ok = ok(() -> fineractFeignClient.batch().handleBatchRequests(List.of(request), false));
-        assertThat(ok).isNotNull();
-        assertThat(ok.get(0).getStatusCode()).isEqualTo(200);
         List<WorkingCapitalLoanBreachScheduleData> actualRangeSchedule = parseBatchResponse(ok, new TypeReference<>() {});
-
         workingCapitalBreachScheduleStepDef.verifyBreachScheduleData(actualRangeSchedule, dataTable);
+    }
+
+    @Then("Working Capital loan breach schedule has no data via batch api")
+    public void verifyBreachRangeScheduleIsEmpty() {
+        Long loanId = workingCapitalDelinquencyStepDef.extractLoanId();
+        String url = WCL_BASE_URL + "/" + loanId + WCL_BREACH_SCHEDULE_PATH;
+        List<BatchResponse> ok = handleBatchRequestByUrlForGetApi(url);
+
+        List<WorkingCapitalLoanBreachScheduleData> actualRangeSchedule = parseBatchResponse(ok, new TypeReference<>() {});
+        assertThat(actualRangeSchedule).as("Range schedule should be empty when loan is not yet disbursed").isEmpty();
+    }
+
+    @Then("Working capital loan details has the following field values via batch api:")
+    public void verifyWorkingCapitalLoanDetailFieldValues(final DataTable table) {
+        Long loanId = workingCapitalDelinquencyStepDef.extractLoanId();
+        String url = WCL_BASE_URL + "/" + loanId;
+        List<BatchResponse> ok = handleBatchRequestByUrlForGetApi(url);
+
+        GetWorkingCapitalLoansLoanIdResponse response = parseBatchResponse(ok, new TypeReference<>() {});
+        workingCapitalLoanAccountStepDef.validateWorkingCapitalLoanDetailFieldValuesResponse(table, response);
+    }
+
+    @Then("Working capital loan details has the client office of the last created office via batch api")
+    public void verifyClientOfficeOfLastCreatedOffice() {
+        Long loanId = workingCapitalDelinquencyStepDef.extractLoanId();
+        List<BatchResponse> ok = handleBatchRequestByUrlForGetApi(WCL_BASE_URL + "/" + loanId);
+
+        GetWorkingCapitalLoansLoanIdResponse response = parseBatchResponse(ok, new TypeReference<>() {});
+        workingCapitalLoanAccountStepDef.verifyClientOfficeOfLastCreatedOffice(response);
     }
 
     private <T> T parseBatchResponse(List<BatchResponse> ok, TypeReference<T> typeReference) {
@@ -939,6 +1006,15 @@ public class WorkingCapitalBatchApiStepDef extends AbstractStepDef {
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new RuntimeException("Error deserializing JSON to object", e);
         }
+    }
+
+    private List<BatchResponse> handleBatchRequestByUrlForGetApi(String url) {
+        BatchRequest request = buildBatchRequest(1L, null, url, BATCH_API_METHOD_GET, null);
+
+        List<BatchResponse> ok = ok(() -> fineractFeignClient.batch().handleBatchRequests(List.of(request), false));
+        assertThat(ok).isNotNull();
+        assertThat(ok.get(0).getStatusCode()).isEqualTo(200);
+        return ok;
     }
 
     // Step request helpers

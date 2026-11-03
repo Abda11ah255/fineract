@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -83,6 +84,7 @@ import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.domain.ClientEnumerations;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
 import org.apache.fineract.portfolio.common.domain.DaysInYearCustomStrategyType;
+import org.apache.fineract.portfolio.common.domain.MonthEndDueDateStrategy;
 import org.apache.fineract.portfolio.common.domain.PeriodFrequencyType;
 import org.apache.fineract.portfolio.common.service.CommonEnumerations;
 import org.apache.fineract.portfolio.delinquency.data.DelinquencyRangeData;
@@ -138,6 +140,7 @@ import org.apache.fineract.portfolio.loanaccount.loanschedule.data.LoanScheduleD
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.domain.LoanScheduleProcessingType;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.domain.LoanScheduleType;
+import org.apache.fineract.portfolio.loanaccount.loanschedule.domain.SemiMonthlyScheduleDates;
 import org.apache.fineract.portfolio.loanaccount.mapper.LoanTransactionMapper;
 import org.apache.fineract.portfolio.loanaccount.repository.LoanBuyDownFeeBalanceRepository;
 import org.apache.fineract.portfolio.loanaccount.repository.LoanCapitalizedIncomeBalanceRepository;
@@ -555,6 +558,16 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
     @Override
     public LoanTransactionData retrieveLoanPrePaymentTemplate(final LoanTransactionType repaymentTransactionType, final Long loanId,
             LocalDate onDate) {
+        return retrieveLoanPayOffTemplate(repaymentTransactionType, loanId, onDate, false);
+    }
+
+    @Override
+    public LoanTransactionData retrieveLoanEarlyTerminationTemplate(final Long loanId, final LocalDate onDate) {
+        return retrieveLoanPayOffTemplate(LoanTransactionType.REPAYMENT, loanId, onDate, true);
+    }
+
+    private LoanTransactionData retrieveLoanPayOffTemplate(final LoanTransactionType repaymentTransactionType, final Long loanId,
+            final LocalDate onDate, final boolean earlyTermination) {
 
         this.context.authenticatedUser();
         this.loanUtilService.validateRepaymentTransactionType(repaymentTransactionType);
@@ -569,8 +582,9 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
         final LocalDate earliestUnpaidInstallmentDate = DateUtils.getBusinessLocalDate();
         final LocalDate recalculateFrom = null;
         final ScheduleGeneratorDTO scheduleGeneratorDTO = loanUtilService.buildScheduleGeneratorDTO(loan, recalculateFrom);
-        final OutstandingAmountsDTO outstandingAmounts = loadTransactionProcessingService.fetchPrepaymentDetail(scheduleGeneratorDTO,
-                onDate, loan);
+        final OutstandingAmountsDTO outstandingAmounts = earlyTermination
+                ? loadTransactionProcessingService.fetchEarlyTerminationDetail(scheduleGeneratorDTO, onDate, loan)
+                : loadTransactionProcessingService.fetchPrepaymentDetail(scheduleGeneratorDTO, onDate, loan);
         final LoanTransactionEnumData transactionType = LoanEnumerations.transactionType(repaymentTransactionType);
         final Collection<PaymentTypeData> paymentOptions = this.paymentTypeReadPlatformService.retrieveAllPaymentTypes();
         final BigDecimal outstandingLoanBalance = outstandingAmounts.principal().getAmount();
@@ -792,7 +806,7 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                     + " l.expected_disbursedon_date as expectedDisbursementDate, l.disbursedon_date as actualDisbursementDate, dbu.username as disbursedByUsername, dbu.firstname as disbursedByFirstname, dbu.lastname as disbursedByLastname,"
                     + " l.closedon_date as closedOnDate, cbu.username as closedByUsername, cbu.firstname as closedByFirstname, cbu.lastname as closedByLastname, l.writtenoffon_date as writtenOffOnDate, "
                     + " l.expected_firstrepaymenton_date as expectedFirstRepaymentOnDate, l.interest_calculated_from_date as interestChargedFromDate, l.maturedon_date as actualMaturityDate, l.expected_maturedon_date as expectedMaturityDate, "
-                    + " l.principal_amount_proposed as proposedPrincipal, l.principal_amount as principal, l.total_principal_derived as totalPrincipal, l.approved_principal as approvedPrincipal, l.net_disbursal_amount as netDisbursalAmount, l.arrearstolerance_amount as inArrearsTolerance, l.number_of_repayments as numberOfRepayments, l.repay_every as repaymentEvery,"
+                    + " l.principal_amount_proposed as proposedPrincipal, l.principal_amount as principal, l.total_principal_derived as totalPrincipal, l.approved_principal as approvedPrincipal, l.net_disbursal_amount as netDisbursalAmount, l.arrearstolerance_amount as inArrearsTolerance, l.number_of_repayments as numberOfRepayments, l.repay_every as repaymentEvery, l.first_repayment_day_of_month as firstRepaymentDayOfMonth, l.second_repayment_day_of_month as secondRepaymentDayOfMonth,"
                     + " l.grace_on_principal_periods as graceOnPrincipalPayment, l.recurring_moratorium_principal_periods as recurringMoratoriumOnPrincipalPeriods, l.grace_on_interest_periods as graceOnInterestPayment, l.grace_interest_free_periods as graceOnInterestCharged,l.grace_on_arrears_ageing as graceOnArrearsAgeing,"
                     + " l.nominal_interest_rate_per_period as interestRatePerPeriod, l.annual_nominal_interest_rate as annualInterestRate, "
                     + " l.repayment_period_frequency_enum as repaymentFrequencyType, l.interest_period_frequency_enum as interestRateFrequencyType, "
@@ -852,6 +866,7 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                     + " l.is_floating_interest_rate as isFloatingInterestRate, "
                     + " l.interest_rate_differential as interestRateDifferential, "
                     + " l.days_in_year_custom_strategy as daysInYearCustomStrategy, "
+                    + " l.month_end_due_date_strategy as monthEndDueDateStrategy, "
                     + " l.enable_income_capitalization as enableIncomeCapitalization, "
                     + " l.capitalized_income_calculation_type as capitalizedIncomeCalculationType, "
                     + " l.capitalized_income_strategy as capitalizedIncomeStrategy, "
@@ -1258,6 +1273,8 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
             final StringEnumOptionData buyDownFeeIncomeType = ApiFacingEnum.getStringEnumOptionData(LoanBuyDownFeeIncomeType.class,
                     rs.getString("buyDownFeeIncomeType"));
             final boolean merchantBuyDownFee = rs.getBoolean("merchantBuyDownFee");
+            final StringEnumOptionData monthEndDueDateStrategy = ApiFacingEnum.getStringEnumOptionData(MonthEndDueDateStrategy.class,
+                    rs.getString("monthEndDueDateStrategy"));
 
             return LoanAccountData.basicLoanDetails(id, accountNo, status, externalId, clientId, clientAccountNo, clientName,
                     clientOfficeId, clientExternalId, groupData, loanType, loanProductId, loanProductName, loanProductDescription,
@@ -1280,7 +1297,9 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                     chargeOffBehaviour.getValueAsStringEnumOptionData(), interestRecognitionOnDisbursementDate, allowFullTermForTranche,
                     daysInYearCustomStrategy, enableIncomeCapitalization, capitalizedIncomeCalculationType, capitalizedIncomeStrategy,
                     capitalizedIncomeType, enableBuyDownFee, buyDownFeeCalculationType, buyDownFeeStrategy, buyDownFeeIncomeType,
-                    merchantBuyDownFee);
+                    merchantBuyDownFee).setMonthEndDueDateStrategy(monthEndDueDateStrategy)
+                    .setFirstRepaymentDayOfMonth(JdbcSupport.getInteger(rs, "firstRepaymentDayOfMonth"))
+                    .setSecondRepaymentDayOfMonth(JdbcSupport.getInteger(rs, "secondRepaymentDayOfMonth"));
         }
     }
 
@@ -1459,7 +1478,8 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
     }
 
     @Override
-    public LoanAccountData retrieveLoanProductDetailsTemplate(final Long productId, final Long clientId, final Long groupId) {
+    public LoanAccountData retrieveLoanProductDetailsTemplate(final Long productId, final Long clientId, final Long groupId,
+            final Long officeId) {
 
         this.context.authenticatedUser();
 
@@ -1493,10 +1513,10 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
         Collection<ChargeData> chargeOptions = null;
         if (loanProduct.getMultiDisburseLoan()) {
             chargeOptions = this.chargeReadPlatformService.retrieveLoanProductApplicableCharges(productId,
-                    new ChargeTimeType[] { ChargeTimeType.OVERDUE_INSTALLMENT });
+                    new ChargeTimeType[] { ChargeTimeType.OVERDUE_INSTALLMENT }, officeId);
         } else {
             chargeOptions = this.chargeReadPlatformService.retrieveLoanProductApplicableCharges(productId,
-                    new ChargeTimeType[] { ChargeTimeType.OVERDUE_INSTALLMENT, ChargeTimeType.TRANCHE_DISBURSEMENT });
+                    new ChargeTimeType[] { ChargeTimeType.OVERDUE_INSTALLMENT, ChargeTimeType.TRANCHE_DISBURSEMENT }, officeId);
         }
 
         Integer loanCycleCounter = null;
@@ -1515,7 +1535,7 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
             activeLoanOptions = this.accountDetailsReadPlatformService.retrieveGroupActiveLoanAccountSummary(groupId);
         }
 
-        return new LoanAccountData().withProductData(loanProduct, loanCycleCounter) //
+        LoanAccountData loanAccountData = new LoanAccountData().withProductData(loanProduct, loanCycleCounter) //
                 .setTermFrequencyTypeOptions(loanTermFrequencyTypeOptions) //
                 .setRepaymentFrequencyTypeOptions(repaymentFrequencyTypeOptions) //
                 .setRepaymentFrequencyNthDayTypeOptions(repaymentFrequencyNthDayTypeOptions) //
@@ -1532,6 +1552,21 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                 .setClientActiveLoanOptions(activeLoanOptions) //
                 .setLoanScheduleTypeOptions(LoanScheduleType.getValuesAsEnumOptionDataList()) //
                 .setLoanScheduleProcessingTypeOptions(LoanScheduleProcessingType.getValuesAsEnumOptionDataList()); //
+
+        if (officeId != null) {
+            final Set<Long> visibleChargeIds = this.chargeReadPlatformService.retrieveLoanProductCharges(productId, officeId).stream()
+                    .map(ChargeData::getId).collect(Collectors.toSet());
+            if (loanAccountData.getCharges() != null) {
+                loanAccountData.setCharges(
+                        loanAccountData.getCharges().stream().filter(charge -> visibleChargeIds.contains(charge.getChargeId())).toList());
+            }
+            if (loanAccountData.getOverdueCharges() != null) {
+                loanAccountData.setOverdueCharges(
+                        loanAccountData.getOverdueCharges().stream().filter(charge -> visibleChargeIds.contains(charge.getId())).toList());
+            }
+        }
+
+        return loanAccountData;
     }
 
     @Override
@@ -1635,14 +1670,14 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
     @SuppressWarnings("deprecation")
     @Override
     public Integer retriveLoanCounter(final Long groupId, final Integer loanType, Long productId) {
-        final String sql = "Select MAX(l.loan_product_counter) from m_loan l where l.group_id = ?  and l.loan_type_enum = ? and l.product_id=?";
+        final String sql = "Select COALESCE(MAX(l.loan_product_counter), 0) from m_loan l where l.group_id = ?  and l.loan_type_enum = ? and l.product_id=?";
         return this.jdbcTemplate.queryForObject(sql, new Object[] { groupId, loanType, productId }, Integer.class);
     }
 
     @SuppressWarnings("deprecation")
     @Override
     public Integer retriveLoanCounter(final Long clientId, Long productId) {
-        final String sql = "Select MAX(l.loan_product_counter) from m_loan l where l.client_id = ? and l.product_id=?";
+        final String sql = "Select COALESCE(MAX(l.loan_product_counter), 0) from m_loan l where l.client_id = ? and l.product_id=?";
         return this.jdbcTemplate.queryForObject(sql, new Object[] { clientId, productId }, Integer.class);
     }
 
@@ -1764,7 +1799,9 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
         }
 
         final PeriodFrequencyType frequencyType = loan.getLoanRepaymentScheduleDetail().getRepaymentPeriodFrequencyType();
-        final LocalDate calculatedStartDate = calculateReAgeStartDate(businessDate, frequencyType);
+        final LocalDate calculatedStartDate = calculateReAgeStartDate(businessDate, frequencyType,
+                loan.getLoanRepaymentScheduleDetail().getFirstRepaymentDayOfMonth(),
+                loan.getLoanRepaymentScheduleDetail().getSecondRepaymentDayOfMonth());
 
         final CurrencyData currencyData = new CurrencyData(loan.getCurrencyCode(), null, loan.getCurrency().getDigitsAfterDecimal(),
                 loan.getCurrency().getInMultiplesOf(), null, null);
@@ -1777,7 +1814,8 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                 .nextInstallmentDueDate(nextInstallmentDueDate).calculatedStartDate(calculatedStartDate).build();
     }
 
-    private LocalDate calculateReAgeStartDate(LocalDate businessDate, PeriodFrequencyType frequencyType) {
+    private LocalDate calculateReAgeStartDate(LocalDate businessDate, PeriodFrequencyType frequencyType, Integer firstRepaymentDayOfMonth,
+            Integer secondRepaymentDayOfMonth) {
         if (frequencyType == null) {
             return null;
         }
@@ -1787,6 +1825,8 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
             case WEEKS -> businessDate.plusWeeks(1);
             case MONTHS -> businessDate.plusMonths(1);
             case YEARS -> businessDate.plusYears(1);
+            case SEMI_MONTHLY -> SemiMonthlyScheduleDates.next(businessDate,
+                    SemiMonthlyScheduleDates.requireDueDays(firstRepaymentDayOfMonth, secondRepaymentDayOfMonth));
             case WHOLE_TERM, INVALID -> null;
         };
     }
@@ -1847,7 +1887,7 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                 LEFT JOIN m_loan_reschedule_request lrr ON lrr.loan_id = l.id
                 -- this is to identify the applicable rates when base rate is changed
                 LEFT JOIN m_floating_rates bfr ON bfr.is_base_lending_rate = TRUE
-                LEFT JOIN m_floating_rates_periods bfrp ON bfr.id = bfrp.floating_rates_id AND bfrp.created_date >= ?
+                LEFT JOIN m_floating_rates_periods bfrp ON bfr.id = bfrp.floating_rates_id AND bfrp.created_on_utc >= ?
                 WHERE l.loan_status_id = ?
                   AND l.is_npa = FALSE
                   AND l.is_charged_off = FALSE
@@ -1861,7 +1901,7 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                         -- float rate changes
                         (fr.is_active = TRUE
                             AND frp.is_active = TRUE
-                            AND (frp.created_date >= ?
+                            AND (frp.created_on_utc >= ?
                                  OR (bfrp.id IS NOT NULL
                                      AND frp.is_differential_to_base_lending_rate = TRUE
                                      AND frp.from_date >= bfrp.from_date))
@@ -1871,8 +1911,10 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                 """;
         try {
             LocalDate currentdate = DateUtils.getBusinessLocalDate();
-            // will look only for yesterday modified rates
-            LocalDate yesterday = DateUtils.getBusinessLocalDate().minusDays(1);
+            // will look only for yesterday modified rates; compared against created_on_utc (a UTC timestamp), so
+            // bind the tenant's actual start-of-day boundary rather than a bare date, which the DB would otherwise
+            // interpret in its own session time zone instead of the tenant's.
+            OffsetDateTime yesterday = DateUtils.getOffsetDateTimeOfTenantFromLocalDate(DateUtils.getBusinessLocalDate().minusDays(1));
             return this.jdbcTemplate.queryForList(sql, Long.class, yesterday, LoanStatus.ACTIVE.getValue(), currentdate, currentdate,
                     currentdate, yesterday);
         } catch (final EmptyResultDataAccessException e) {
@@ -1883,8 +1925,10 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
     @Override
     public List<Long> fetchLoansForInterestRecalculation(Integer pageSize, Long maxLoanIdInList, String officeHierarchy) {
         LocalDate currentdate = DateUtils.getBusinessLocalDate();
-        // will look only for yesterday modified rates
-        LocalDate yesterday = DateUtils.getBusinessLocalDate().minusDays(1);
+        // will look only for yesterday modified rates; compared against created_on_utc (a UTC timestamp), so bind
+        // the tenant's actual start-of-day boundary rather than a bare date, which the DB would otherwise interpret
+        // in its own session time zone instead of the tenant's.
+        OffsetDateTime yesterday = DateUtils.getOffsetDateTimeOfTenantFromLocalDate(DateUtils.getBusinessLocalDate().minusDays(1));
         final String sql = """
                 SELECT l.id
                 FROM m_loan l
@@ -1903,7 +1947,7 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                 LEFT JOIN m_loan_reschedule_request lrr ON lrr.loan_id = l.id
                 -- this is to identify the applicable rates when base rate is changed
                 LEFT JOIN m_floating_rates bfr ON bfr.is_base_lending_rate = TRUE
-                LEFT JOIN m_floating_rates_periods bfrp ON bfr.id = bfrp.floating_rates_id AND bfrp.created_date >= ?
+                LEFT JOIN m_floating_rates_periods bfrp ON bfr.id = bfrp.floating_rates_id AND bfrp.created_on_utc >= ?
                 WHERE l.loan_status_id = ?
                     AND l.is_npa = FALSE
                     AND l.is_charged_off = FALSE
@@ -1915,15 +1959,16 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService, Loa
                         OR
                          (fr.is_active = TRUE
                              AND frp.is_active = TRUE
-                             AND (frp.created_date >= ?
+                             AND (frp.created_on_utc >= ?
                                   OR (bfrp.id IS NOT NULL
                                       AND frp.is_differential_to_base_lending_rate = TRUE
                                       AND frp.from_date >= bfrp.from_date))
                              AND lrr.loan_id IS NULL)
                     )
-                    AND l.id >= ?
+                    AND l.id > ?
                     AND o.hierarchy like ?
                 GROUP BY l.id
+                ORDER BY l.id
                 LIMIT ?
                 """;
         try {

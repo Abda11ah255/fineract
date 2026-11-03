@@ -71,10 +71,12 @@ import org.apache.fineract.portfolio.workingcapitalloanproduct.domain.WorkingCap
 import org.apache.fineract.portfolio.workingcapitalloanproduct.domain.WorkingCapitalLoanDelinquencyStartType;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.domain.WorkingCapitalLoanProduct;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.domain.WorkingCapitalLoanProductConfigurableAttributes;
+import org.apache.fineract.portfolio.workingcapitalloanproduct.domain.WorkingCapitalLoanProductRelatedDetails;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.domain.WorkingCapitalPaymentAmountCalculationStrategy;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.exception.WorkingCapitalLoanProductNotFoundException;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.repository.WorkingCapitalLoanProductRepository;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.serialization.WorkingCapitalAmountScaleValidator;
+import org.apache.fineract.portfolio.workingcapitalloanproduct.serialization.WorkingCapitalDependentSettingsValidator;
 import org.apache.fineract.portfolio.workingcapitalloanproduct.serialization.WorkingCapitalPaymentAllocationDataValidator;
 import org.springframework.stereotype.Component;
 
@@ -108,6 +110,7 @@ public class WorkingCapitalLoanApplicationDataValidator {
     private static final String EIR_NOT_CALCULABLE_CODE = "unable.to.calculate.valid.eir";
     private static final String SCHEDULE_NOT_CALCULABLE_CODE = "unable.to.calculate.valid.schedule";
     private static final String PAYMENT_AMOUNT_NOT_CALCULABLE_CODE = "unable.to.build.schedule.from.payment.amount";
+    private static final String MUST_BE_PROVIDED_WITH_CODE_PREFIX = "must.be.provided.with.";
 
     private final FromJsonHelper fromApiJsonHelper;
     private final WorkingCapitalPaymentAllocationDataValidator paymentAllocationDataValidator;
@@ -174,24 +177,24 @@ public class WorkingCapitalLoanApplicationDataValidator {
 
         final BigDecimal periodPaymentRate = this.fromApiJsonHelper
                 .parameterExists(WorkingCapitalLoanProductConstants.periodPaymentRateParamName, element)
-                        ? this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanProductConstants.periodPaymentRateParamName,
-                                element, new HashSet<>())
+                        ? this.fromApiJsonHelper
+                                .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.periodPaymentRateParamName, element)
                         : null;
 
         final BigDecimal totalPaymentVolume = this.fromApiJsonHelper
                 .parameterExists(WorkingCapitalLoanConstants.totalPaymentVolumeParamName, element)
-                        ? this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanConstants.totalPaymentVolumeParamName, element,
-                                new HashSet<>())
+                        ? this.fromApiJsonHelper.extractBigDecimalWithLocaleNamed(WorkingCapitalLoanConstants.totalPaymentVolumeParamName,
+                                element)
                         : null;
 
         final BigDecimal annualEir = this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanConstants.annualEirParamName, element)
-                ? this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanConstants.annualEirParamName, element, new HashSet<>())
+                ? this.fromApiJsonHelper.extractBigDecimalWithLocaleNamed(WorkingCapitalLoanConstants.annualEirParamName, element)
                 : null;
 
         final BigDecimal paymentAmount = this.fromApiJsonHelper
                 .parameterExists(WorkingCapitalLoanProductConstants.paymentAmountParamName, element)
-                        ? this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanProductConstants.paymentAmountParamName, element,
-                                new HashSet<>())
+                        ? this.fromApiJsonHelper.extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.paymentAmountParamName,
+                                element)
                         : null;
         final BigDecimal resolvedPaymentAmount = resolvePaymentAmount(paymentAmount, product);
 
@@ -246,8 +249,8 @@ public class WorkingCapitalLoanApplicationDataValidator {
         // Optional: discount
         BigDecimal discount = null;
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.discountParamName, element)) {
-            discount = this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanProductConstants.discountParamName, element,
-                    new HashSet<>());
+            discount = this.fromApiJsonHelper.extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.discountParamName,
+                    element);
             baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.discountParamName).value(discount).ignoreIfNull()
                     .zeroOrPositiveAmount();
         }
@@ -280,49 +283,8 @@ public class WorkingCapitalLoanApplicationDataValidator {
             this.paymentAllocationDataValidator.validate(element, baseDataValidator);
         }
 
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element)) {
-            final Integer delinquencyGraceDays = this.fromApiJsonHelper
-                    .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName)
-                    .value(delinquencyGraceDays).ignoreIfNull().integerZeroOrGreater();
-        }
-
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element)) {
-            final Integer breachGraceDays = this.fromApiJsonHelper
-                    .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachGraceDaysParamName).value(breachGraceDays)
-                    .ignoreIfNull().integerZeroOrGreater();
-        }
-
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element)) {
-            final String delinquencyStartTypeValue = this.fromApiJsonHelper
-                    .extractStringNamed(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName)
-                    .value(delinquencyStartTypeValue).ignoreIfNull().notBlank();
-            if (delinquencyStartTypeValue != null && !delinquencyStartTypeValue.isBlank()) {
-                final WorkingCapitalLoanDelinquencyStartType delinquencyStartType = WorkingCapitalLoanDelinquencyStartType
-                        .fromString(delinquencyStartTypeValue);
-                if (delinquencyStartType == null) {
-                    baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName)
-                            .failWithCode("invalid.delinquency.start.type");
-                }
-            }
-        }
-
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element)) {
-            final String breachStartTypeValue = this.fromApiJsonHelper
-                    .extractStringNamed(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachStartTypeParamName).value(breachStartTypeValue)
-                    .ignoreIfNull().notBlank();
-            if (breachStartTypeValue != null && !breachStartTypeValue.isBlank()) {
-                final WorkingCapitalLoanBreachStartType breachStartType = WorkingCapitalLoanBreachStartType
-                        .fromString(breachStartTypeValue);
-                if (breachStartType == null) {
-                    baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachStartTypeParamName)
-                            .failWithCode("invalid.breach.start.type");
-                }
-            }
-        }
+        validateDelinquencyGraceAndStartTypeFields(element, baseDataValidator, resolveEffectiveDelinquencyBucketId(element, product, null));
+        validateBreachGraceAndStartTypeFields(element, baseDataValidator, resolveEffectiveBreachId(element, product, null));
 
         // Submitted-on date rules (product range, client activation, not future, not after expected disbursement)
         validateSubmittedOnDate(element, product, client, expectedDisbursementDate, null);
@@ -384,7 +346,7 @@ public class WorkingCapitalLoanApplicationDataValidator {
         WorkingCapitalLoanDiscountValidation.validateDiscountDoesNotExceedPrincipal(effectiveDiscount, principal,
                 WorkingCapitalLoanProductConstants.discountParamName, baseDataValidator);
 
-        validatePaymentCalculable(dataValidationErrors, product, paymentStrategy, principal, periodPaymentRate, totalPaymentVolume,
+        validatePaymentCalculable(dataValidationErrors, element, product, paymentStrategy, principal, periodPaymentRate, totalPaymentVolume,
                 annualEir, resolvedPaymentAmount, effectiveDiscount);
 
         throwExceptionIfValidationWarningsExist(dataValidationErrors);
@@ -442,34 +404,55 @@ public class WorkingCapitalLoanApplicationDataValidator {
     }
 
     /** Runs only when no prior errors exist so the produced message is a single, unambiguous validation error. */
-    private void validatePaymentCalculable(final List<ApiParameterError> dataValidationErrors, final WorkingCapitalLoanProduct product,
-            final WorkingCapitalPaymentAmountCalculationStrategy strategy, final BigDecimal principal, final BigDecimal periodPaymentRate,
-            final BigDecimal totalPaymentVolume, final BigDecimal annualEir, final BigDecimal resolvedPaymentAmount,
-            final BigDecimal effectiveDiscount) {
+    private void validatePaymentCalculable(final List<ApiParameterError> dataValidationErrors, final JsonElement element,
+            final WorkingCapitalLoanProduct product, final WorkingCapitalPaymentAmountCalculationStrategy strategy,
+            final BigDecimal principal, final BigDecimal periodPaymentRate, final BigDecimal totalPaymentVolume, final BigDecimal annualEir,
+            final BigDecimal resolvedPaymentAmount, final BigDecimal effectiveDiscount) {
         if (!dataValidationErrors.isEmpty() || product == null || product.getRelatedDetail() == null
                 || product.getRelatedDetail().getNpvDayCount() == null || principal == null) {
             return;
         }
         final MathContext mc = MoneyHelper.getMathContext();
+        final WorkingCapitalLoanPeriodFrequencyType repaymentFrequencyType = requestedOrProductRepaymentFrequencyType(element, product);
+        if (!isSchedulable(repaymentFrequencyType)) {
+            dataValidationErrors.add(invalidRepaymentFrequencyTypeError());
+            return;
+        }
+        final Integer repaymentEvery = requestedOrProductRepaymentEvery(element, product);
         final boolean calculable;
         if (strategy.isPaymentAmount()) {
             calculable = resolvedPaymentAmount != null && ProjectedAmortizationScheduleModel.isPaymentAmountCalculable(
                     product.getRelatedDetail().getAmortizationType(), effectiveDiscount, principal, resolvedPaymentAmount,
-                    product.getRelatedDetail().getNpvDayCount(), product.getCurrency(), mc);
+                    product.getRelatedDetail().getNpvDayCount(), repaymentFrequencyType, repaymentEvery, product.getCurrency(), mc);
         } else if (strategy.isAnnualEir()) {
             final BigDecimal resolvedAnnualEir = annualEir != null ? annualEir : product.getRelatedDetail().getAnnualEir();
             calculable = resolvedAnnualEir != null && ProjectedAmortizationScheduleModel.isAnnualEirCalculable(
                     product.getRelatedDetail().getAmortizationType(), effectiveDiscount, principal, resolvedAnnualEir,
-                    product.getRelatedDetail().getNpvDayCount(), product.getCurrency(), mc);
+                    product.getRelatedDetail().getNpvDayCount(), repaymentFrequencyType, repaymentEvery, product.getCurrency(), mc);
         } else {
             calculable = periodPaymentRate != null && totalPaymentVolume != null
                     && ProjectedAmortizationScheduleModel.isScheduleCalculable(product.getRelatedDetail().getAmortizationType(),
                             effectiveDiscount, principal, totalPaymentVolume, periodPaymentRate,
-                            product.getRelatedDetail().getNpvDayCount(), product.getCurrency(), mc);
+                            product.getRelatedDetail().getNpvDayCount(), repaymentFrequencyType, repaymentEvery, product.getCurrency(), mc);
         }
         if (!calculable) {
             dataValidationErrors.add(notCalculableError(strategy, product.getRelatedDetail().getAmortizationType()));
         }
+    }
+
+    /** The loan-level override when one was sent (only reached once it has validated), else the product's. */
+    private WorkingCapitalLoanPeriodFrequencyType requestedOrProductRepaymentFrequencyType(final JsonElement element,
+            final WorkingCapitalLoanProduct product) {
+        final String requested = this.fromApiJsonHelper
+                .extractStringNamed(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName, element);
+        return requested != null ? WorkingCapitalLoanPeriodFrequencyType.fromString(requested)
+                : product.getRelatedDetail().getRepaymentFrequencyType();
+    }
+
+    private Integer requestedOrProductRepaymentEvery(final JsonElement element, final WorkingCapitalLoanProduct product) {
+        final Integer requested = this.fromApiJsonHelper
+                .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.repaymentEveryParamName, element);
+        return requested != null ? requested : product.getRelatedDetail().getRepaymentEvery();
     }
 
     /**
@@ -514,6 +497,9 @@ public class WorkingCapitalLoanApplicationDataValidator {
         if (details == null || details.getNpvDayCount() == null) {
             return;
         }
+        if (!isSchedulable(details.getRepaymentFrequencyType())) {
+            throw new PlatformApiDataValidationException(List.of(invalidRepaymentFrequencyTypeError()));
+        }
         final MathContext mc = MoneyHelper.getMathContext();
         final BigDecimal discount = details.getDiscountProposed() != null ? details.getDiscountProposed() : BigDecimal.ZERO;
         final WorkingCapitalPaymentAmountCalculationStrategy strategy = details.getPaymentAmountCalculationStrategy() != null
@@ -524,22 +510,35 @@ public class WorkingCapitalLoanApplicationDataValidator {
             final BigDecimal resolvedPaymentAmount = details.getPaymentAmount();
             calculable = resolvedPaymentAmount != null && ProjectedAmortizationScheduleModel.isPaymentAmountCalculable(
                     details.getAmortizationType(), discount, loan.getProposedPrincipal(), resolvedPaymentAmount, details.getNpvDayCount(),
-                    loan.getLoanProduct().getCurrency(), mc);
+                    details.getRepaymentFrequencyType(), details.getRepaymentEvery(), loan.getLoanProduct().getCurrency(), mc);
         } else if (strategy.isAnnualEir()) {
             final BigDecimal resolvedAnnualEir = details.getAnnualEir();
             calculable = resolvedAnnualEir != null && ProjectedAmortizationScheduleModel.isAnnualEirCalculable(
                     details.getAmortizationType(), discount, loan.getProposedPrincipal(), resolvedAnnualEir, details.getNpvDayCount(),
-                    loan.getLoanProduct().getCurrency(), mc);
+                    details.getRepaymentFrequencyType(), details.getRepaymentEvery(), loan.getLoanProduct().getCurrency(), mc);
         } else {
             calculable = ProjectedAmortizationScheduleModel.isScheduleCalculable(details.getAmortizationType(), discount,
                     loan.getProposedPrincipal(), loan.getTotalPaymentVolume(), details.getPeriodPaymentRate(), details.getNpvDayCount(),
-                    loan.getLoanProduct().getCurrency(), mc);
+                    details.getRepaymentFrequencyType(), details.getRepaymentEvery(), loan.getLoanProduct().getCurrency(), mc);
         }
         if (!calculable) {
             final List<ApiParameterError> errors = new ArrayList<>();
             errors.add(notCalculableError(strategy, details.getAmortizationType()));
             throw new PlatformApiDataValidationException(errors);
         }
+    }
+
+    /** A stored YEARS (accepted before) must fail on the frequency, not as an uncalculable rate or amount. */
+    private static boolean isSchedulable(final WorkingCapitalLoanPeriodFrequencyType repaymentFrequencyType) {
+        return repaymentFrequencyType == null || repaymentFrequencyType.isRepaymentFrequency();
+    }
+
+    private ApiParameterError invalidRepaymentFrequencyTypeError() {
+        final List<ApiParameterError> assembled = new ArrayList<>();
+        new DataValidatorBuilder(assembled).resource(WorkingCapitalLoanConstants.WCL_RESOURCE_NAME).reset()
+                .parameter(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName)
+                .failWithCode(WorkingCapitalLoanProductConstants.INVALID_PERIOD_FREQUENCY_TYPE_CODE);
+        return assembled.getFirst();
     }
 
     private ApiParameterError notCalculableError(final WorkingCapitalPaymentAmountCalculationStrategy strategy,
@@ -642,7 +641,7 @@ public class WorkingCapitalLoanApplicationDataValidator {
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.periodPaymentRateParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
             final BigDecimal periodPaymentRate = this.fromApiJsonHelper
-                    .extractBigDecimalNamed(WorkingCapitalLoanProductConstants.periodPaymentRateParamName, element, new HashSet<>());
+                    .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.periodPaymentRateParamName, element);
             baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.periodPaymentRateParamName).value(periodPaymentRate)
                     .notNull().zeroOrPositiveAmount();
             if (paymentStrategy != null && paymentStrategy.isAnnualEir()) {
@@ -659,7 +658,7 @@ public class WorkingCapitalLoanApplicationDataValidator {
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanConstants.totalPaymentVolumeParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
             final BigDecimal totalPaymentVolume = this.fromApiJsonHelper
-                    .extractBigDecimalNamed(WorkingCapitalLoanConstants.totalPaymentVolumeParamName, element, new HashSet<>());
+                    .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanConstants.totalPaymentVolumeParamName, element);
             baseDataValidator.reset().parameter(WorkingCapitalLoanConstants.totalPaymentVolumeParamName).value(totalPaymentVolume).notNull()
                     .zeroOrPositiveAmount();
             if (paymentStrategy != null && paymentStrategy.isAnnualEir()) {
@@ -673,8 +672,8 @@ public class WorkingCapitalLoanApplicationDataValidator {
 
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanConstants.annualEirParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
-            final BigDecimal annualEir = this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanConstants.annualEirParamName,
-                    element, new HashSet<>());
+            final BigDecimal annualEir = this.fromApiJsonHelper
+                    .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanConstants.annualEirParamName, element);
             baseDataValidator.reset().parameter(WorkingCapitalLoanConstants.annualEirParamName).value(annualEir).notNull().positiveAmount()
                     .notGreaterThanMax(ProjectedAmortizationScheduleModel.MAX_CALCULABLE_ANNUAL_EIR);
             if (paymentStrategy != null && paymentStrategy.isTpv()) {
@@ -691,7 +690,7 @@ public class WorkingCapitalLoanApplicationDataValidator {
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.paymentAmountParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
             final BigDecimal paymentAmount = this.fromApiJsonHelper
-                    .extractBigDecimalNamed(WorkingCapitalLoanProductConstants.paymentAmountParamName, element, new HashSet<>());
+                    .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.paymentAmountParamName, element);
             baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.paymentAmountParamName).value(paymentAmount).notNull()
                     .positiveAmount();
             WorkingCapitalAmountScaleValidator.validateNotFinerThanCurrency(baseDataValidator,
@@ -706,8 +705,8 @@ public class WorkingCapitalLoanApplicationDataValidator {
 
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.discountParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
-            final BigDecimal discount = this.fromApiJsonHelper.extractBigDecimalNamed(WorkingCapitalLoanProductConstants.discountParamName,
-                    element, new HashSet<>());
+            final BigDecimal discount = this.fromApiJsonHelper
+                    .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.discountParamName, element);
             baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.discountParamName).value(discount).ignoreIfNull()
                     .zeroOrPositiveAmount();
         }
@@ -773,52 +772,16 @@ public class WorkingCapitalLoanApplicationDataValidator {
                     product.getNearBreach());
         }
 
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element)) {
+        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element)
+                || this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
-            final Integer delinquencyGraceDays = this.fromApiJsonHelper
-                    .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName)
-                    .value(delinquencyGraceDays).ignoreIfNull().integerZeroOrGreater();
+            validateDelinquencyGraceAndStartTypeFields(element, baseDataValidator,
+                    resolveEffectiveDelinquencyBucketId(element, product, existingLoan));
         }
-
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element)) {
+        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element)
+                || this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element)) {
             atLeastOneParameterPassedForUpdate = true;
-            final Integer breachGraceDays = this.fromApiJsonHelper
-                    .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachGraceDaysParamName).value(breachGraceDays)
-                    .ignoreIfNull().integerZeroOrGreater();
-        }
-
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element)) {
-            final String delinquencyStartTypeValue = this.fromApiJsonHelper
-                    .extractStringNamed(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName)
-                    .value(delinquencyStartTypeValue).ignoreIfNull().notBlank();
-            if (delinquencyStartTypeValue != null && !delinquencyStartTypeValue.isBlank()) {
-                atLeastOneParameterPassedForUpdate = true;
-                final WorkingCapitalLoanDelinquencyStartType delinquencyStartType = WorkingCapitalLoanDelinquencyStartType
-                        .fromString(delinquencyStartTypeValue);
-                if (delinquencyStartType == null) {
-                    baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName)
-                            .failWithCode("invalid.delinquency.start.type");
-                }
-            }
-        }
-
-        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element)) {
-            final String breachStartTypeValue = this.fromApiJsonHelper
-                    .extractStringNamed(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element);
-            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachStartTypeParamName).value(breachStartTypeValue)
-                    .ignoreIfNull().notBlank();
-            if (breachStartTypeValue != null && !breachStartTypeValue.isBlank()) {
-                atLeastOneParameterPassedForUpdate = true;
-                final WorkingCapitalLoanBreachStartType breachStartType = WorkingCapitalLoanBreachStartType
-                        .fromString(breachStartTypeValue);
-                if (breachStartType == null) {
-                    baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachStartTypeParamName)
-                            .failWithCode("invalid.breach.start.type");
-                }
-            }
+            validateBreachGraceAndStartTypeFields(element, baseDataValidator, resolveEffectiveBreachId(element, product, existingLoan));
         }
 
         if (!atLeastOneParameterPassedForUpdate) {
@@ -890,8 +853,124 @@ public class WorkingCapitalLoanApplicationDataValidator {
         return Stream.of(WorkingCapitalLoanProductConstants.delinquencyBucketIdParamName,
                 WorkingCapitalLoanProductConstants.repaymentEveryParamName,
                 WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName, WorkingCapitalLoanProductConstants.discountParamName,
-                WorkingCapitalLoanProductConstants.breachIdParamName, WorkingCapitalLoanProductConstants.nearBreachIdParamName)
+                WorkingCapitalLoanProductConstants.breachIdParamName, WorkingCapitalLoanProductConstants.nearBreachIdParamName,
+                WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName,
+                WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName,
+                WorkingCapitalLoanProductConstants.breachGraceDaysParamName, WorkingCapitalLoanProductConstants.breachStartTypeParamName)
                 .anyMatch(param -> this.fromApiJsonHelper.parameterExists(param, element));
+    }
+
+    /**
+     * Half an override would be paired with the other half of the product's frequency, so a MONTHS override on a
+     * DAYS/30 product would schedule 30-month periods.
+     */
+    private void validateRepaymentFrequencyOverriddenTogether(final JsonElement element, final DataValidatorBuilder baseDataValidator) {
+        final boolean repaymentEverySent = this.fromApiJsonHelper
+                .parameterExists(WorkingCapitalLoanProductConstants.repaymentEveryParamName, element);
+        final boolean repaymentFrequencyTypeSent = this.fromApiJsonHelper
+                .parameterExists(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName, element);
+        if (repaymentEverySent && !repaymentFrequencyTypeSent) {
+            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName)
+                    .failWithCode(MUST_BE_PROVIDED_WITH_CODE_PREFIX + WorkingCapitalLoanProductConstants.repaymentEveryParamName);
+        } else if (repaymentFrequencyTypeSent && !repaymentEverySent) {
+            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.repaymentEveryParamName)
+                    .failWithCode(MUST_BE_PROVIDED_WITH_CODE_PREFIX + WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName);
+        }
+    }
+
+    private void validateDelinquencyGraceAndStartTypeFields(final JsonElement element, final DataValidatorBuilder baseDataValidator,
+            final Long effectiveDelinquencyBucketId) {
+        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element)) {
+            final Integer delinquencyGraceDays = this.fromApiJsonHelper
+                    .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName, element);
+            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName)
+                    .value(delinquencyGraceDays).ignoreIfNull().integerZeroOrGreater();
+            WorkingCapitalDependentSettingsValidator.rejectIfSetWithoutParent(baseDataValidator,
+                    WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName,
+                    WorkingCapitalDependentSettingsValidator.isSet(delinquencyGraceDays), effectiveDelinquencyBucketId,
+                    WorkingCapitalLoanProductConstants.cannotEnableDelinquencyGraceDaysWithoutBucket);
+        }
+
+        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element)) {
+            final String delinquencyStartTypeValue = this.fromApiJsonHelper
+                    .extractStringNamed(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName, element);
+            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName)
+                    .value(delinquencyStartTypeValue).ignoreIfNull().notBlank();
+            if (delinquencyStartTypeValue != null) {
+                final WorkingCapitalLoanDelinquencyStartType delinquencyStartType = WorkingCapitalLoanDelinquencyStartType
+                        .fromString(delinquencyStartTypeValue);
+                if (delinquencyStartType == null) {
+                    baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName)
+                            .failWithCode("invalid.delinquency.start.type");
+                }
+                WorkingCapitalDependentSettingsValidator.rejectIfSetWithoutParent(baseDataValidator,
+                        WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName,
+                        WorkingCapitalDependentSettingsValidator.isSet(delinquencyStartTypeValue), effectiveDelinquencyBucketId,
+                        WorkingCapitalLoanProductConstants.cannotEnableDelinquencyStartTypeWithoutBucket);
+            }
+        }
+    }
+
+    private void validateBreachGraceAndStartTypeFields(final JsonElement element, final DataValidatorBuilder baseDataValidator,
+            final Long effectiveBreachId) {
+        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element)) {
+            final Integer breachGraceDays = this.fromApiJsonHelper
+                    .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.breachGraceDaysParamName, element);
+            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachGraceDaysParamName).value(breachGraceDays)
+                    .ignoreIfNull().integerZeroOrGreater();
+            WorkingCapitalDependentSettingsValidator.rejectIfSetWithoutParent(baseDataValidator,
+                    WorkingCapitalLoanProductConstants.breachGraceDaysParamName,
+                    WorkingCapitalDependentSettingsValidator.isSet(breachGraceDays), effectiveBreachId,
+                    WorkingCapitalLoanProductConstants.cannotEnableBreachGraceDaysWithoutBreach);
+        }
+
+        if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element)) {
+            final String breachStartTypeValue = this.fromApiJsonHelper
+                    .extractStringNamed(WorkingCapitalLoanProductConstants.breachStartTypeParamName, element);
+            baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachStartTypeParamName).value(breachStartTypeValue)
+                    .ignoreIfNull().notBlank();
+            if (breachStartTypeValue != null) {
+                final WorkingCapitalLoanBreachStartType breachStartType = WorkingCapitalLoanBreachStartType
+                        .fromString(breachStartTypeValue);
+                if (breachStartType == null) {
+                    baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.breachStartTypeParamName)
+                            .failWithCode("invalid.breach.start.type");
+                }
+                WorkingCapitalDependentSettingsValidator.rejectIfSetWithoutParent(baseDataValidator,
+                        WorkingCapitalLoanProductConstants.breachStartTypeParamName,
+                        WorkingCapitalDependentSettingsValidator.isSet(breachStartTypeValue), effectiveBreachId,
+                        WorkingCapitalLoanProductConstants.cannotEnableBreachStartTypeWithoutBreach);
+            }
+        }
+    }
+
+    // On create the loan inherits the product's bucket; on update only the loan's own bucket counts (it is copied at
+    // creation and never re-inherited, so a cleared loan bucket must not fall back to the product's).
+    private Long resolveEffectiveDelinquencyBucketId(final JsonElement element, final WorkingCapitalLoanProduct product,
+            final WorkingCapitalLoan existingLoan) {
+        final Long currentBucketId;
+        if (existingLoan != null) {
+            final WorkingCapitalLoanProductRelatedDetails loanDetails = existingLoan.getLoanProductRelatedDetails();
+            currentBucketId = loanDetails != null && loanDetails.getDelinquencyBucket() != null ? loanDetails.getDelinquencyBucket().getId()
+                    : null;
+        } else {
+            currentBucketId = product != null && product.getDelinquencyBucket() != null ? product.getDelinquencyBucket().getId() : null;
+        }
+        return WorkingCapitalDependentSettingsValidator.resolveEffectiveDelinquencyBucketId(this.fromApiJsonHelper, element,
+                currentBucketId);
+    }
+
+    // Same inheritance rule as resolveEffectiveDelinquencyBucketId.
+    private Long resolveEffectiveBreachId(final JsonElement element, final WorkingCapitalLoanProduct product,
+            final WorkingCapitalLoan existingLoan) {
+        final Long currentBreachId;
+        if (existingLoan != null) {
+            final WorkingCapitalLoanProductRelatedDetails loanDetails = existingLoan.getLoanProductRelatedDetails();
+            currentBreachId = loanDetails != null && loanDetails.getBreach() != null ? loanDetails.getBreach().getId() : null;
+        } else {
+            currentBreachId = product != null && product.getBreach() != null ? product.getBreach().getId() : null;
+        }
+        return WorkingCapitalDependentSettingsValidator.resolveEffectiveBreachId(this.fromApiJsonHelper, element, currentBreachId);
     }
 
     private void validateOverridables(final JsonElement element, final DataValidatorBuilder baseDataValidator,
@@ -913,7 +992,7 @@ public class WorkingCapitalLoanApplicationDataValidator {
                 final Integer repaymentEvery = this.fromApiJsonHelper
                         .extractIntegerWithLocaleNamed(WorkingCapitalLoanProductConstants.repaymentEveryParamName, element);
                 baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.repaymentEveryParamName).value(repaymentEvery)
-                        .ignoreIfNull().integerGreaterThanZero();
+                        .notNull().integerGreaterThanZero();
             } else {
                 baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.repaymentEveryParamName)
                         .failWithCode("override.not.allowed.by.product");
@@ -924,13 +1003,13 @@ public class WorkingCapitalLoanApplicationDataValidator {
                 final String repaymentFrequencyTypeValue = this.fromApiJsonHelper
                         .extractStringNamed(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName, element);
                 baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName)
-                        .value(repaymentFrequencyTypeValue).ignoreIfNull().notBlank();
+                        .value(repaymentFrequencyTypeValue).notBlank();
                 if (repaymentFrequencyTypeValue != null && !repaymentFrequencyTypeValue.isBlank()) {
                     final WorkingCapitalLoanPeriodFrequencyType repaymentFrequencyType = WorkingCapitalLoanPeriodFrequencyType
                             .fromString(repaymentFrequencyTypeValue);
-                    if (repaymentFrequencyType == null) {
+                    if (repaymentFrequencyType == null || !repaymentFrequencyType.isRepaymentFrequency()) {
                         baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.repaymentFrequencyTypeParamName)
-                                .failWithCode("invalid.period.frequency.type");
+                                .failWithCode(WorkingCapitalLoanProductConstants.INVALID_PERIOD_FREQUENCY_TYPE_CODE);
                     }
                 }
             } else {
@@ -938,10 +1017,11 @@ public class WorkingCapitalLoanApplicationDataValidator {
                         .failWithCode("override.not.allowed.by.product");
             }
         }
+        validateRepaymentFrequencyOverriddenTogether(element, baseDataValidator);
         if (this.fromApiJsonHelper.parameterExists(WorkingCapitalLoanProductConstants.discountParamName, element)) {
             if (config.isDiscountDefaultOverridable()) {
                 final BigDecimal discount = this.fromApiJsonHelper
-                        .extractBigDecimalNamed(WorkingCapitalLoanProductConstants.discountParamName, element, new java.util.HashSet<>());
+                        .extractBigDecimalWithLocaleNamed(WorkingCapitalLoanProductConstants.discountParamName, element);
                 baseDataValidator.reset().parameter(WorkingCapitalLoanProductConstants.discountParamName).value(discount).ignoreIfNull()
                         .zeroOrPositiveAmount();
             } else {
@@ -977,6 +1057,24 @@ public class WorkingCapitalLoanApplicationDataValidator {
         }
         if (breachId != null && nearBreachId != null) {
             workingCapitalNearBreachValidator.validateNearBreachAgainstBreach(baseDataValidator, breachId, nearBreachId);
+        }
+        // Grace days and start type follow the same override switch as their bucket / breach
+        rejectIfNotOverridable(element, baseDataValidator, config.isDelinquencyBucketClassification(),
+                WorkingCapitalLoanProductConstants.delinquencyGraceDaysParamName,
+                WorkingCapitalLoanProductConstants.delinquencyStartTypeParamName);
+        rejectIfNotOverridable(element, baseDataValidator, config.isBreach(), WorkingCapitalLoanProductConstants.breachGraceDaysParamName,
+                WorkingCapitalLoanProductConstants.breachStartTypeParamName);
+    }
+
+    private void rejectIfNotOverridable(final JsonElement element, final DataValidatorBuilder baseDataValidator, final boolean overridable,
+            final String... paramNames) {
+        if (overridable) {
+            return;
+        }
+        for (final String paramName : paramNames) {
+            if (this.fromApiJsonHelper.parameterExists(paramName, element)) {
+                baseDataValidator.reset().parameter(paramName).failWithCode("override.not.allowed.by.product");
+            }
         }
     }
 
@@ -1132,13 +1230,17 @@ public class WorkingCapitalLoanApplicationDataValidator {
     }
 
     public void handleDataIntegrityIssues(final JsonCommand command, final Throwable realCause, final Exception dve) {
+        handleDataIntegrityIssues(command, command.stringValueOfParameterNamed("accountNo"), realCause, dve);
+    }
+
+    public void handleDataIntegrityIssues(final JsonCommand command, final String accountNo, final Throwable realCause,
+            final Exception dve) {
         if (realCause != null) {
             final String message = realCause.getMessage();
             final Throwable cause = realCause.getCause();
             final String causeMessage = cause != null ? cause.getMessage() : null;
             if ((message != null && message.contains("wc_loan_account_no_UNIQUE"))
                     || (causeMessage != null && causeMessage.contains("wc_loan_account_no_UNIQUE"))) {
-                final String accountNo = command.stringValueOfParameterNamed("accountNo");
                 throw new PlatformDataIntegrityException("error.msg.wc.loan.duplicate.accountNo",
                         "Working Capital Loan with accountNo `" + accountNo + "` already exists", "accountNo", accountNo);
             }

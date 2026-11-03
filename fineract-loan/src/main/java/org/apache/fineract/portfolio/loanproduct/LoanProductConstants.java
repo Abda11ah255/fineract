@@ -83,6 +83,7 @@ public interface LoanProductConstants {
     String IS_INTEREST_RECALCULATION_ENABLED_PARAMETER_NAME = "isInterestRecalculationEnabled";
     String DAYS_IN_YEAR_TYPE_PARAMETER_NAME = "daysInYearType";
     String DAYS_IN_YEAR_CUSTOM_STRATEGY_TYPE_PARAMETER_NAME = "daysInYearCustomStrategy";
+    String MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME = "monthEndDueDateStrategy";
     String DAYS_IN_MONTH_TYPE_PARAMETER_NAME = "daysInMonthType";
     String interestRecalculationCompoundingMethodParameterName = "interestRecalculationCompoundingMethod";
     String rescheduleStrategyMethodParameterName = "rescheduleStrategyMethod";
@@ -166,6 +167,8 @@ public interface LoanProductConstants {
     String ADVANCED_PAYMENT_ALLOCATION_STRATEGY = "advanced-payment-allocation-strategy";
 
     String FIXED_LENGTH = "fixedLength";
+    String FIRST_REPAYMENT_DAY_OF_MONTH = "firstRepaymentDayOfMonth";
+    String SECOND_REPAYMENT_DAY_OF_MONTH = "secondRepaymentDayOfMonth";
 
     String ENABLE_ACCRUAL_ACTIVITY_POSTING = "enableAccrualActivityPosting";
     String SUPPORTED_INTEREST_REFUND_TYPES = "supportedInterestRefundTypes";

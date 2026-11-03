@@ -237,7 +237,7 @@ final class RecurringDepositAccountsApiResourceSwagger {
         @Schema(example = "1")
         public Long id;
         @Schema(example = "000000001")
-        public Long accountNo;
+        public String accountNo;
         @Schema(example = "1")
         public Long clientId;
         @Schema(example = "Sangamesh N")
@@ -343,6 +343,10 @@ final class RecurringDepositAccountsApiResourceSwagger {
         public Integer inMultiplesOfDepositTerm;
         @Schema(example = "2")
         public Integer inMultiplesOfDepositTermTypeId;
+        @Schema(example = "false", description = "Determines whether product level interest rate chart is overridden by custom nominal annual interest rate")
+        public Boolean isRateChartOverridden;
+        @Schema(example = "5.0", description = "Custom nominal annual interest rate to override product chart slabs")
+        public BigDecimal nominalAnnualInterestRate;
     }
 
     @Schema(description = "PostRecurringDepositAccountsResponse")
@@ -434,7 +438,7 @@ final class RecurringDepositAccountsApiResourceSwagger {
             @Schema(example = "5")
             public Long accountId;
             @Schema(example = "RD000023")
-            public Long accountNumber;
+            public String accountNumber;
             public Set<GetRecurringDepositAccountsChartSlabs> chartSlabs;
             public Set<GetRecurringDepositAccountsPeriodTypes> periodTypes;
         }
@@ -442,7 +446,7 @@ final class RecurringDepositAccountsApiResourceSwagger {
         @Schema(example = "1")
         public Long id;
         @Schema(example = "RD000023")
-        public Long accountNo;
+        public String accountNo;
         @Schema(example = "RD-23")
         public String externalId;
         @Schema(example = "1")
@@ -487,6 +491,8 @@ final class RecurringDepositAccountsApiResourceSwagger {
         public GetRecurringDepositAccountsResponse.GetRecurringDepositAccountsRecurringDepositFrequencyType recurringFrequencyType;
         @Schema(example = "6")
         public Integer depositPeriod;
+        @Schema(example = "false", description = "Determines whether product level interest rate chart is overridden by custom nominal annual interest rate")
+        public Boolean isRateChartOverridden;
         public GetRecurringDepositAccountsResponse.GetRecurringDepositAccountsDepositPeriodFrequency depositPeriodFrequency;
         public GetRecurringDepositAccountsResponse.GetRecurringDepositAccountsSummary summary;
         public GetRecurringDepositAccountsAccountChart accountChart;
@@ -555,6 +561,10 @@ final class RecurringDepositAccountsApiResourceSwagger {
         public Integer inMultiplesOfDepositTerm;
         @Schema(example = "2")
         public Integer inMultiplesOfDepositTermTypeId;
+        @Schema(example = "false", description = "Determines whether product level interest rate chart is overridden by custom nominal annual interest rate")
+        public Boolean isRateChartOverridden;
+        @Schema(example = "5.0", description = "Custom nominal annual interest rate to override product chart slabs")
+        public BigDecimal nominalAnnualInterestRate;
     }
 
     @Schema(description = "PutRecurringDepositAccountsAccountIdResponse")

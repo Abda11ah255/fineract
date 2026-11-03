@@ -39,6 +39,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.ParameterType;
 import io.cucumber.java.en.And;
+import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
 import java.io.IOException;
@@ -96,9 +97,11 @@ import org.apache.fineract.client.models.GetLoansLoanIdLoanTransactionRelation;
 import org.apache.fineract.client.models.GetLoansLoanIdRepaymentPeriod;
 import org.apache.fineract.client.models.GetLoansLoanIdRepaymentSchedule;
 import org.apache.fineract.client.models.GetLoansLoanIdResponse;
+import org.apache.fineract.client.models.GetLoansLoanIdSubStatus;
 import org.apache.fineract.client.models.GetLoansLoanIdTimeline;
 import org.apache.fineract.client.models.GetLoansLoanIdTransactions;
 import org.apache.fineract.client.models.GetLoansLoanIdTransactionsResponse;
+import org.apache.fineract.client.models.GetLoansLoanIdTransactionsTemplateResponse;
 import org.apache.fineract.client.models.GetLoansLoanIdTransactionsTransactionIdResponse;
 import org.apache.fineract.client.models.IsCatchUpRunningDTO;
 import org.apache.fineract.client.models.LoanAmortizationAllocationResponse;
@@ -160,7 +163,6 @@ import org.apache.fineract.test.messaging.event.EventCheckHelper;
 import org.apache.fineract.test.messaging.event.loan.LoanRescheduledDueAdjustScheduleEvent;
 import org.apache.fineract.test.messaging.event.loan.LoanStatusChangedEvent;
 import org.apache.fineract.test.messaging.event.loan.transaction.AbstractLoanTransactionEvent;
-import org.apache.fineract.test.messaging.event.loan.transaction.BulkBusinessEvent;
 import org.apache.fineract.test.messaging.event.loan.transaction.LoanAccrualAdjustmentTransactionBusinessEvent;
 import org.apache.fineract.test.messaging.event.loan.transaction.LoanAccrualTransactionCreatedBusinessEvent;
 import org.apache.fineract.test.messaging.event.loan.transaction.LoanAdjustTransactionBusinessEvent;
@@ -178,6 +180,7 @@ import org.apache.fineract.test.messaging.event.loan.transaction.LoanChargeOffUn
 import org.apache.fineract.test.messaging.event.loan.transaction.LoanDisbursalTransactionEvent;
 import org.apache.fineract.test.messaging.event.loan.transaction.LoanTransactionAccrualActivityPostEvent;
 import org.apache.fineract.test.messaging.event.loan.transaction.LoanTransactionContractTerminationPostBusinessEvent;
+import org.apache.fineract.test.messaging.event.loan.transaction.LoanTransactionLoanWithdrawalPostBusinessEvent;
 import org.apache.fineract.test.messaging.store.EventStore;
 import org.apache.fineract.test.stepdef.AbstractStepDef;
 import org.apache.fineract.test.support.TestContextKey;
@@ -200,6 +203,9 @@ public class LoanStepDef extends AbstractStepDef {
     private static final DateTimeFormatter FORMATTER_EVENTS = DateTimeFormatter.ofPattern(DATE_FORMAT_EVENTS);
     private static final String TRANSACTION_DATE_FORMAT = "dd MMMM yyyy";
     private static final String CONTRACT_TERMINATION_COMMAND = "contractTermination";
+    private static final String LOAN_WITHDRAWAL_COMMAND = "loanWithdrawal";
+    private static final String UNDO_CONTRACT_TERMINATION_COMMAND = "undoContractTermination";
+    private static final String UNDO_LOAN_WITHDRAWAL_COMMAND = "undoLoanWithdrawal";
 
     private final BusinessDateHelper businessDateHelper;
     private final FineractFeignClient fineractClient;
@@ -701,6 +707,12 @@ public class LoanStepDef extends AbstractStepDef {
 
     @When("Admin creates a fully customized loan with charges and following data:")
     public void createFullyCustomizedLoanWithLoanCharges(final DataTable table) {
+        final List<List<String>> data = table.asLists();
+        createFullyCustomizedLoanWithCharges(data.get(1));
+    }
+
+    @When("Admin creates a fully customized loan with due date charge and following data:")
+    public void createFullyCustomizedLoanWithDueDateCharge(final DataTable table) {
         final List<List<String>> data = table.asLists();
         createFullyCustomizedLoanWithCharges(data.get(1));
     }
@@ -1472,6 +1484,32 @@ public class LoanStepDef extends AbstractStepDef {
         final GetLoansLoanIdResponse loanDetails = ok(() -> fineractClient.loans().retrieveOneLoan(loanId,
                 Map.of("staffInSelectedOfficeOnly", "false", "associations", "charges")));
 
+        final PutLoansLoanIdRequest putLoansLoanIdRequest = modifyLoanRequestWithExistingCharges(loanDetails)//
+                .interestRatePerPeriod(new BigDecimal(newInterestRate));
+
+        final PutLoansLoanIdResponse responseMod = ok(
+                () -> fineractClient.loans().updateLoanApplication(loanId, putLoansLoanIdRequest, Map.of()));
+        testContext().set(TestContextKey.LOAN_MODIFY_RESPONSE, responseMod);
+    }
+
+    @When("Admin modifies the loan and adds {string} due date charge with {string} due date and {double} EUR transaction amount")
+    public void modifyLoanAddDueDateCharge(final String chargeType, final String dueDate, final double amount) {
+        final PostLoansResponse loanResponse = testContext().get(TestContextKey.LOAN_CREATE_RESPONSE);
+        final Long loanId = loanResponse.getResourceId();
+
+        final GetLoansLoanIdResponse loanDetails = ok(() -> fineractClient.loans().retrieveOneLoan(loanId,
+                Map.of("staffInSelectedOfficeOnly", "false", "associations", "charges")));
+
+        final Long chargeId = chargeProductResolver.resolve(ChargeProductType.valueOf(chargeType));
+        final PutLoansLoanIdRequest putLoansLoanIdRequest = modifyLoanRequestWithExistingCharges(loanDetails)//
+                .addChargesItem(new PutLoansLoanIdChargeData().chargeId(chargeId).dueDate(dueDate).amount(BigDecimal.valueOf(amount)));
+
+        final PutLoansLoanIdResponse responseMod = ok(
+                () -> fineractClient.loans().updateLoanApplication(loanId, putLoansLoanIdRequest, Map.of()));
+        testContext().set(TestContextKey.LOAN_MODIFY_RESPONSE, responseMod);
+    }
+
+    private PutLoansLoanIdRequest modifyLoanRequestWithExistingCharges(final GetLoansLoanIdResponse loanDetails) {
         final PutLoansLoanIdRequest putLoansLoanIdRequest = new PutLoansLoanIdRequest()//
                 .productId(loanDetails.getLoanProductId())//
                 .principal(loanDetails.getPrincipal().longValue())//
@@ -1480,7 +1518,7 @@ public class LoanStepDef extends AbstractStepDef {
                 .numberOfRepayments(loanDetails.getNumberOfRepayments())//
                 .repaymentEvery(loanDetails.getRepaymentEvery())//
                 .repaymentFrequencyType(loanDetails.getRepaymentFrequencyType().getId().intValue())//
-                .interestRatePerPeriod(new BigDecimal(newInterestRate))//
+                .interestRatePerPeriod(loanDetails.getInterestRatePerPeriod())//
                 .interestType(loanDetails.getInterestType().getId().intValue())//
                 .interestCalculationPeriodType(loanDetails.getInterestCalculationPeriodType().getId().intValue())//
                 .amortizationType(loanDetails.getAmortizationType().getId().intValue())//
@@ -1501,10 +1539,7 @@ public class LoanStepDef extends AbstractStepDef {
                         .dueDate(charge.getDueDate().format(FORMATTER)).amount(charge.getAmountOrPercentage()));
             }
         }
-
-        final PutLoansLoanIdResponse responseMod = ok(
-                () -> fineractClient.loans().updateLoanApplication(loanId, putLoansLoanIdRequest, Map.of()));
-        testContext().set(TestContextKey.LOAN_MODIFY_RESPONSE, responseMod);
+        return putLoansLoanIdRequest;
     }
 
     @Then("Admin fails to create a new customised Loan submitted on date: {string}, with Principal: {string}, a loanTermFrequency: {int} months, and numberOfRepayments: {int}")
@@ -1866,6 +1901,15 @@ public class LoanStepDef extends AbstractStepDef {
         assertThat(undoDisbursalResponse.getChanges().getStatus().getValue()).isEqualTo(LOAN_STATE_APPROVED);
     }
 
+    private void validateDisburseLoanWithInvalidDataFailure(final long loanId, final PostLoansLoanIdRequest disburseRequest,
+            final int errorCode, final String errorMessage) {
+        CallFailedRuntimeException exception = fail(
+                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
+        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(errorCode);
+        assertThat(exception.getDeveloperMessage()).containsPattern(errorMessage);
+        log.debug("Error message while disburse loan with invalid data: {}", exception.getDeveloperMessage());
+    }
+
     @Then("Admin fails to disburse the loan on {string} with {string} EUR transaction amount because of wrong date")
     public void disburseLoanFailureWithDate(String actualDisbursementDate, String transactionAmount) {
         PostLoansResponse loanResponse = testContext().get(TestContextKey.LOAN_CREATE_RESPONSE);
@@ -1873,10 +1917,8 @@ public class LoanStepDef extends AbstractStepDef {
         PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
                 .actualDisbursementDate(actualDisbursementDate).transactionAmount(new BigDecimal(transactionAmount));
 
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(403);
-        assertThat(exception.getDeveloperMessage()).contains(ErrorMessageHelper.disburseDateFailure((int) loanId));
+        final String errorMessage = ErrorMessageHelper.disburseDateFailure((int) loanId);
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} EUR transaction amount because of wrong amount")
@@ -1886,11 +1928,8 @@ public class LoanStepDef extends AbstractStepDef {
         PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
                 .actualDisbursementDate(actualDisbursementDate).transactionAmount(new BigDecimal(transactionAmount));
 
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(403);
-        assertThat(exception.getDeveloperMessage()).containsPattern(ErrorMessageHelper.disburseMaxAmountFailure());
-        log.debug("Error message: {}", exception.getDeveloperMessage());
+        final String errorMessage = ErrorMessageHelper.disburseMaxAmountFailure();
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} amount")
@@ -1900,10 +1939,8 @@ public class LoanStepDef extends AbstractStepDef {
         PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest().actualDisbursementDate(disbursementDate)
                 .transactionAmount(new BigDecimal(disbursementAmount));
 
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(400);
-        assertThat(exception.getDeveloperMessage()).contains(ErrorMessageHelper.disburseIsNotAllowedFailure());
+        final String errorMessage = ErrorMessageHelper.disburseIsNotAllowedFailure();
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 400, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} amount due to exceed approved amount")
@@ -1913,10 +1950,8 @@ public class LoanStepDef extends AbstractStepDef {
         final PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
                 .actualDisbursementDate(disbursementDate).transactionAmount(new BigDecimal(disbursementAmount));
 
-        final CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(403);
-        assertThat(exception.getDeveloperMessage()).contains(ErrorMessageHelper.disburseIsNotAllowedExceedApprovedAmountFailure());
+        final String errorMessage = ErrorMessageHelper.disburseIsNotAllowedExceedApprovedAmountFailure();
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} EUR transaction amount because of charge-off that was performed for the loan")
@@ -1926,11 +1961,8 @@ public class LoanStepDef extends AbstractStepDef {
         PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
                 .actualDisbursementDate(actualDisbursementDate).transactionAmount(new BigDecimal(transactionAmount));
 
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(403);
-        assertThat(exception.getDeveloperMessage()).containsPattern(ErrorMessageHelper.disburseChargedOffLoanFailure());
-        log.debug("Error message: {}", exception.getDeveloperMessage());
+        final String errorMessage = ErrorMessageHelper.disburseChargedOffLoanFailure();
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} EUR transaction amount because disbursement date is earlier than {string}")
@@ -1941,11 +1973,8 @@ public class LoanStepDef extends AbstractStepDef {
                 .actualDisbursementDate(actualDisbursementDate).transactionAmount(new BigDecimal(transactionAmount));
 
         String futureApproveDateISO = FORMATTER_EVENTS.format(FORMATTER.parse(futureApproveDate));
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.dateFailureErrorCodeMsg()).isEqualTo(403);
-        assertThat(exception.getDeveloperMessage())
-                .contains(ErrorMessageHelper.disbursePastDateFailure((int) loanId, futureApproveDateISO));
+        final String errorMessage = ErrorMessageHelper.disbursePastDateFailure((int) loanId, futureApproveDateISO);
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} EUR transaction amount due to exceed approved amount")
@@ -1955,10 +1984,8 @@ public class LoanStepDef extends AbstractStepDef {
         PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
                 .actualDisbursementDate(actualDisbursementDate).transactionAmount(new BigDecimal(transactionAmount));
 
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus()).as(ErrorMessageHelper.addDisbursementExceedApprovedAmountFailure()).isEqualTo(403);
-        assertThat(exception.getDeveloperMessage()).contains(ErrorMessageHelper.addDisbursementExceedApprovedAmountFailure());
+        final String errorMessage = ErrorMessageHelper.addDisbursementExceedApprovedAmountFailure();
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @Then("Admin fails to disburse the loan on {string} with {string} EUR trn amount with total disb amount {string} and max disb amount {string} due to exceed max applied amount")
@@ -1969,13 +1996,20 @@ public class LoanStepDef extends AbstractStepDef {
         PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
                 .actualDisbursementDate(actualDisbursementDate).transactionAmount(new BigDecimal(transactionAmount));
 
-        CallFailedRuntimeException exception = fail(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, disburseRequest, Map.of("command", "disburse")));
-        assertThat(exception.getStatus())
-                .as(ErrorMessageHelper.addDisbursementExceedMaxAppliedAmountFailure(totalDisbursalAmount, maxDisbursalAmount))
-                .isEqualTo(403);
-        assertThat(exception.getDeveloperMessage())
-                .contains(ErrorMessageHelper.addDisbursementExceedMaxAppliedAmountFailure(totalDisbursalAmount, maxDisbursalAmount));
+        final String errorMessage = ErrorMessageHelper.addDisbursementExceedMaxAppliedAmountFailure(totalDisbursalAmount,
+                maxDisbursalAmount);
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
+    }
+
+    @Then("Admin fails to disburse the loan on {string} with {string} EUR trn amount due to charge due date created before is out of range")
+    public void disbursementForbiddenWithChargeOutOfRangeFailure(String disbursementDate, String disbursementAmount) {
+        final PostLoansResponse loanResponse = testContext().get(TestContextKey.LOAN_CREATE_RESPONSE);
+        final long loanId = loanResponse.getLoanId();
+        final PostLoansLoanIdRequest disburseRequest = loanRequestFactory.defaultLoanDisburseRequest()
+                .actualDisbursementDate(disbursementDate).transactionAmount(new BigDecimal(disbursementAmount));
+
+        final String errorMessage = ErrorMessageHelper.disburseWithChargeOutOfRangeFailure();
+        validateDisburseLoanWithInvalidDataFailure(loanId, disburseRequest, 403, errorMessage);
     }
 
     @And("Admin does charge-off the loan on {string}")
@@ -2289,6 +2323,31 @@ public class LoanStepDef extends AbstractStepDef {
 
             assertThat(linesActual).as(ErrorMessageHelper.wrongNumberOfLinesInRepaymentSchedule(resourceId, linesActual, linesExpected))
                     .isEqualTo(linesExpected);
+        }
+    }
+
+    @Then("Loan Repayment schedule has {int} periods, with the following due dates only:")
+    public void loanRepaymentScheduleDueDatesOnlyCheck(int linesExpected, DataTable table) {
+
+        PostLoansResponse loanCreateResponse = testContext().get(TestContextKey.LOAN_CREATE_RESPONSE);
+        long loanId = loanCreateResponse.getLoanId();
+
+        GetLoansLoanIdResponse loanDetailsResponse = ok(() -> fineractClient.loans().retrieveOneLoan(loanId,
+                Map.of("staffInSelectedOfficeOnly", "false", "associations", "repaymentSchedule")));
+        List<GetLoansLoanIdRepaymentPeriod> repaymentPeriods = loanDetailsResponse.getRepaymentSchedule().getPeriods();
+
+        List<List<String>> data = table.asLists();
+        int linesActual = (int) repaymentPeriods.stream().filter(r -> r.getPeriod() != null).count();
+        assertThat(linesActual)
+                .as(ErrorMessageHelper.wrongNumberOfLinesInRepaymentSchedule(String.valueOf(loanId), linesActual, linesExpected))
+                .isEqualTo(linesExpected);
+
+        for (int i = 1; i < data.size(); i++) {
+            List<String> expectedValues = data.get(i);
+            String dueDateExpected = expectedValues.get(1);
+            boolean found = repaymentPeriods.stream().filter(r -> r.getPeriod() != null)
+                    .anyMatch(r -> dueDateExpected.equals(FORMATTER.format(r.getDueDate())));
+            assertThat(found).as("Expected due date %s not found in repayment schedule", dueDateExpected).isTrue();
         }
     }
 
@@ -3027,8 +3086,8 @@ public class LoanStepDef extends AbstractStepDef {
     }
 
     @Then("BulkBusinessEvent is not raised on {string}")
-    public void checkLoanBulkBusinessEventNotCreatedBusinessEvent(String date) {
-        eventAssertion.assertEventNotRaised(BulkBusinessEvent.class, em -> FORMATTER.format(em.getBusinessDate()).equals(date));
+    public void checkLoanBulkBusinessEventNotCreatedBusinessEvent(final String date) {
+        eventAssertion.assertBulkEventNotRaised(bulkEvent -> FORMATTER.format(bulkEvent.businessDate()).equals(date));
     }
 
     public GetLoansLoanIdTransactions getLoanTransactionIdByDate(String transactionType, String transactionDate) {
@@ -3397,6 +3456,19 @@ public class LoanStepDef extends AbstractStepDef {
         testContext().set(TestContextKey.LOAN_WRITE_OFF_RESPONSE, writeOffResponse);
     }
 
+    @And("Admin makes a recovery payment of {double} on the loan on {string}")
+    public void makeRecoveryPayment(final double transactionAmount, final String transactionDate) {
+        final long loanId = getLoanId();
+        final PostLoansLoanIdTransactionsRequest recoveryRequest = new PostLoansLoanIdTransactionsRequest()//
+                .transactionDate(transactionDate)//
+                .transactionAmount(transactionAmount)//
+                .dateFormat(DATE_FORMAT)//
+                .locale(DEFAULT_LOCALE);
+
+        ok(() -> fineractClient.loanTransactions().handleCommandsLoanTransaction(loanId, recoveryRequest,
+                Map.of("command", "recoverypayment")));
+    }
+
     @Then("Write-off transaction is not possible on {string}")
     public void writeOffFailure(final String transactionDate) {
         final long loanId = getLoanId();
@@ -3629,6 +3701,85 @@ public class LoanStepDef extends AbstractStepDef {
         testContext().set(TestContextKey.LOAN_PRODUCT_CREATE_REQUEST, request);
     }
 
+    @When("Admin creates a new Loan Product with monthEndDueDateStrategy {string}")
+    public void createLoanProductWithMonthEndDueDateStrategy(String monthEndDueDateStrategy) {
+        final PostLoanProductsRequest request = loanProductsRequestFactory.defaultLoanProductsRequestLP1()//
+                .monthEndDueDateStrategy(PostLoanProductsRequest.MonthEndDueDateStrategyEnum.fromValue(monthEndDueDateStrategy));
+        final PostLoanProductsResponse response = ok(() -> fineractClient.loanProducts().createLoanProduct(request));
+        testContext().set(TestContextKey.LOAN_PRODUCT_CREATE_RESPONSE, response);
+        testContext().set(TestContextKey.LOAN_PRODUCT_CREATE_REQUEST, request);
+    }
+
+    @Then("Loan Product {string} has monthEndDueDateStrategy {string}")
+    public void verifyLoanProductMonthEndDueDateStrategy(String loanProductName, String expectedStrategy) {
+        final DefaultLoanProduct product = DefaultLoanProduct.valueOf(loanProductName);
+        final Long loanProductId = loanProductResolver.resolve(product);
+        final GetLoanProductsProductIdResponse response = ok(() -> fineractClient.loanProducts().retrieveOneLoanProduct(loanProductId));
+        assertThat(response.getMonthEndDueDateStrategy()).isNotNull();
+        assertThat(response.getMonthEndDueDateStrategy().getId()).isEqualTo(expectedStrategy);
+    }
+
+    @Then("created Loan Product has monthEndDueDateStrategy {string}")
+    public void verifyCreatedLoanProductMonthEndDueDateStrategy(String expectedStrategy) {
+        final PostLoanProductsResponse createResponse = testContext().get(TestContextKey.LOAN_PRODUCT_CREATE_RESPONSE);
+        final GetLoanProductsProductIdResponse response = ok(
+                () -> fineractClient.loanProducts().retrieveOneLoanProduct(createResponse.getResourceId()));
+        assertThat(response.getMonthEndDueDateStrategy()).isNotNull();
+        assertThat(response.getMonthEndDueDateStrategy().getId()).isEqualTo(expectedStrategy);
+    }
+
+    @When("Admin updates created Loan Product monthEndDueDateStrategy to {string}")
+    public void updateCreatedLoanProductMonthEndDueDateStrategy(String monthEndDueDateStrategy) {
+        final PostLoanProductsResponse createResponse = testContext().get(TestContextKey.LOAN_PRODUCT_CREATE_RESPONSE);
+        final PutLoanProductsProductIdRequest request = new PutLoanProductsProductIdRequest()//
+                .monthEndDueDateStrategy(PutLoanProductsProductIdRequest.MonthEndDueDateStrategyEnum.fromValue(monthEndDueDateStrategy));
+        ok(() -> fineractClient.loanProducts().updateLoanProduct(createResponse.getResourceId(), request));
+    }
+
+    @Given("Loan product {string} dedicated to this scenario exists with monthEndDueDateStrategy {string}")
+    public void ensureDedicatedMonthEndDueDateLoanProduct(String loanProductName, String monthEndDueDateStrategy) {
+        final Optional<Long> existingId = findLoanProductIdByName(loanProductName);
+        if (existingId.isPresent()) {
+            // a previous run may have left it changed, so start from the requested strategy
+            updateLoanProductMonthEndDueDateStrategy(loanProductName, monthEndDueDateStrategy);
+            return;
+        }
+        final PostLoanProductsRequest request = loanProductsRequestFactory.defaultLoanProductsRequestLP2MonthEndDueDateRollActual()//
+                .name(loanProductName)//
+                .monthEndDueDateStrategy(PostLoanProductsRequest.MonthEndDueDateStrategyEnum.fromValue(monthEndDueDateStrategy));
+        ok(() -> fineractClient.loanProducts().createLoanProduct(request));
+    }
+
+    @When("Admin updates {string} loan product monthEndDueDateStrategy to {string}")
+    public void updateLoanProductMonthEndDueDateStrategy(String loanProductName, String monthEndDueDateStrategy) {
+        final Long loanProductId = resolveLoanProductId(loanProductName);
+        final PutLoanProductsProductIdRequest request = new PutLoanProductsProductIdRequest()//
+                .monthEndDueDateStrategy(PutLoanProductsProductIdRequest.MonthEndDueDateStrategyEnum.fromValue(monthEndDueDateStrategy));
+        ok(() -> fineractClient.loanProducts().updateLoanProduct(loanProductId, request));
+    }
+
+    @When("Admin retrieves the Loan Product template for monthEndDueDateStrategy")
+    public void retrieveLoanProductTemplateForMonthEndDueDateStrategy() {
+        final GetLoanProductsTemplateResponse template = ok(() -> fineractClient.loanProducts().retrieveTemplateLoanProduct(false));
+        testContext().set(TestContextKey.LOAN_PRODUCT_MONTH_END_TEMPLATE_RESPONSE, template);
+    }
+
+    @Then("Loan Product template has monthEndDueDateStrategy options:")
+    public void verifyLoanProductTemplateMonthEndDueDateStrategyOptions(DataTable table) {
+        final GetLoanProductsTemplateResponse template = testContext().get(TestContextKey.LOAN_PRODUCT_MONTH_END_TEMPLATE_RESPONSE);
+        final List<String> expectedOptions = table.asList();
+        final List<String> actualOptions = template.getMonthEndDueDateStrategyOptions().stream().map(option -> option.getId()).toList();
+        assertThat(actualOptions).containsExactlyInAnyOrderElementsOf(expectedOptions);
+    }
+
+    @Then("Loan has monthEndDueDateStrategy {string}")
+    public void verifyLoanMonthEndDueDateStrategy(String expectedStrategy) {
+        final PostLoansResponse loanResponse = testContext().get(TestContextKey.LOAN_CREATE_RESPONSE);
+        final GetLoansLoanIdResponse loanDetails = ok(() -> fineractClient.loans().retrieveOneLoan(loanResponse.getLoanId(), Map.of()));
+        assertThat(loanDetails.getMonthEndDueDateStrategy()).isNotNull();
+        assertThat(loanDetails.getMonthEndDueDateStrategy().getId()).isEqualTo(expectedStrategy);
+    }
+
     @When("Admin retrieves the Loan Product template")
     public void retrieveLoanProductTemplate() {
         final Long loanProductId = loanProductResolver.resolve(DefaultLoanProduct.LP1);
@@ -3695,6 +3846,23 @@ public class LoanStepDef extends AbstractStepDef {
         return request;
     }
 
+    /**
+     * A default product by its {@link DefaultLoanProduct} name, or a product created on-the-fly by its name.
+     */
+    private Long resolveLoanProductId(final String loanProductName) {
+        try {
+            return loanProductResolver.resolve(DefaultLoanProduct.valueOf(loanProductName));
+        } catch (IllegalArgumentException e) {
+            return findLoanProductIdByName(loanProductName)
+                    .orElseThrow(() -> new IllegalArgumentException("Loan product [%s] not found".formatted(loanProductName), e));
+        }
+    }
+
+    private Optional<Long> findLoanProductIdByName(final String loanProductName) {
+        final List<GetLoanProductsResponse> products = ok(() -> fineractClient.loanProducts().retrieveAllLoanProducts(Map.of()));
+        return products.stream().filter(product -> loanProductName.equals(product.getName())).findAny().map(GetLoanProductsResponse::getId);
+    }
+
     private void createCustomizedLoan(final List<List<String>> loanData, final String emiStr) {
         final PostClientsResponse clientResponse = testContext().get(TestContextKey.CLIENT_CREATE_RESPONSE);
         final Long clientId = clientResponse.getClientId();
@@ -3704,17 +3872,7 @@ public class LoanStepDef extends AbstractStepDef {
             String value = loanData.getLast().get(i);
             switch (loanData.getFirst().get(i)) {
                 case "LoanProduct" -> {
-                    Long loanProductId;
-                    try {
-                        final DefaultLoanProduct product = DefaultLoanProduct.valueOf(value);
-                        loanProductId = loanProductResolver.resolve(product);
-                    } catch (IllegalArgumentException e) {
-                        // Dedicated product created on-the-fly: resolve by name
-                        List<GetLoanProductsResponse> products = ok(() -> fineractClient.loanProducts().retrieveAllLoanProducts(Map.of()));
-                        loanProductId = products.stream().filter(p -> value.equals(p.getName())).findAny()
-                                .orElseThrow(() -> new IllegalArgumentException("Loan product [%s] not found".formatted(value))).getId();
-                    }
-                    loansRequest.productId(loanProductId);
+                    loansRequest.productId(resolveLoanProductId(value));
                 }
                 case "submitted on date" -> {
                     loansRequest.submittedOnDate(value);
@@ -3779,6 +3937,11 @@ public class LoanStepDef extends AbstractStepDef {
                 case "Repayment start date type" -> {
                     final RepaymentStartDateType repaymentStartDateType = RepaymentStartDateType.valueOf(value);
                     loansRequest.repaymentStartDateType(repaymentStartDateType.getValue());
+                }
+                case "monthEndDueDateStrategy" -> {
+                    final PostLoansRequest.MonthEndDueDateStrategyEnum monthEndDueDateStrategy = PostLoansRequest.MonthEndDueDateStrategyEnum
+                            .fromValue(value);
+                    loansRequest.monthEndDueDateStrategy(monthEndDueDateStrategy);
                 }
                 case "withLinkedSavingsAccountId" -> {
                     boolean withLinkedSavingsAccountId = Boolean.parseBoolean(value);
@@ -4067,7 +4230,9 @@ public class LoanStepDef extends AbstractStepDef {
         Long chargeId = chargeProductResolver.resolve(chargeProductType);
 
         List<PostLoansRequestChargeData> charges = new ArrayList<>();
-        charges.add(new PostLoansRequestChargeData().chargeId(chargeId).amount(chargesAmount));
+        // an optional 19th column holds the due date of a specified due date charge
+        final String chargeDueDate = loanData.size() > 18 ? loanData.get(18) : null;
+        charges.add(new PostLoansRequestChargeData().chargeId(chargeId).amount(chargesAmount).dueDate(chargeDueDate));
 
         final PostLoansRequest loansRequest = loanRequestFactory//
                 .defaultLoansRequest(clientId)//
@@ -5474,12 +5639,156 @@ public class LoanStepDef extends AbstractStepDef {
         final PostLoansLoanIdRequest request = loanRequestFactory.defaultContractTerminationUndoRequest();
 
         final PostLoansLoanIdResponse response = ok(
-                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", "undoContractTermination")));
+                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", UNDO_CONTRACT_TERMINATION_COMMAND)));
         testContext().set(TestContextKey.LOAN_UNDO_CONTRACT_TERMINATION_RESPONSE, response);
         assert targetTransaction != null;
         eventCheckHelper.checkTransactionWithLoanTransactionAdjustmentBizEvent(targetTransaction);
         eventCheckHelper.loanUndoContractTerminationEventCheck(targetTransaction);
         eventCheckHelper.loanBalanceChangedEventCheck(loanId);
+    }
+
+    @Then("Admin fails to terminate loan contract on {string} because loan withdrawal is already applied")
+    public void loanContractTerminationOnWithdrawnLoanFailure(final String transactionDate) {
+        assertLoanContractTerminationRejected(transactionDate, ErrorMessageHelper.contractTerminationOnWithdrawnLoanFailure());
+    }
+
+    @Then("Admin fails to undo loan contract termination because the loan is not contract terminated")
+    public void undoLoanContractTerminationNotAppliedFailure() {
+        final long loanId = getLoanId();
+        final PostLoansLoanIdRequest request = loanRequestFactory.defaultContractTerminationUndoRequest();
+        final CallFailedRuntimeException exception = fail(
+                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", UNDO_CONTRACT_TERMINATION_COMMAND)));
+        assertCallRejected(exception, 403, ErrorMessageHelper.undoContractTerminationNotAppliedFailure(loanId));
+    }
+
+    @And("Admin successfully applies loan withdrawal")
+    public void makeLoanWithdrawal() {
+        applyLoanWithdrawalAndAssertEvent(loanRequestFactory.defaultLoanWithdrawalRequest());
+    }
+
+    @And("Admin successfully applies loan withdrawal on {string}")
+    public void makeLoanWithdrawalOnDate(final String transactionDate) {
+        applyLoanWithdrawalAndAssertEvent(loanRequestFactory.defaultLoanWithdrawalRequest().transactionDate(transactionDate))
+                .extractingData(LoanTransactionDataV1::getDate).isEqualTo(FORMATTER_EVENTS.format(FORMATTER.parse(transactionDate)));
+    }
+
+    @Then("Admin fails to apply loan withdrawal on {string} because the date is before the last transaction date")
+    public void loanWithdrawalBeforeLastTransactionDateFailure(final String transactionDate) {
+        assertLoanWithdrawalRejected(transactionDate, ErrorMessageHelper.loanWithdrawalBeforeLastTransactionDateFailure());
+    }
+
+    @Then("Admin fails to apply loan withdrawal on {string} because the date is before the submitted on date of a charge")
+    public void loanWithdrawalBeforeChargeSubmittedOnDateFailure(final String transactionDate) {
+        assertLoanWithdrawalRejected(transactionDate, ErrorMessageHelper.loanWithdrawalBeforeChargeSubmittedOnDateFailure());
+    }
+
+    @Then("Admin fails to apply loan withdrawal on {string} because the date is not before the maturity date")
+    public void loanWithdrawalNotBeforeMaturityDateFailure(final String transactionDate) {
+        assertLoanWithdrawalRejected(transactionDate, ErrorMessageHelper.loanWithdrawalNotBeforeMaturityDateFailure());
+    }
+
+    @Then("Admin fails to apply loan withdrawal on {string} because loan withdrawal is already applied")
+    public void loanWithdrawalAlreadyAppliedFailure(final String transactionDate) {
+        assertLoanWithdrawalRejected(transactionDate, ErrorMessageHelper.loanWithdrawalAlreadyAppliedFailure());
+    }
+
+    @Then("Admin fails to apply loan withdrawal on {string} because the loan contract is already terminated")
+    public void loanWithdrawalOnTerminatedLoanFailure(final String transactionDate) {
+        assertLoanWithdrawalRejected(transactionDate, ErrorMessageHelper.loanWithdrawalOnTerminatedLoanFailure());
+    }
+
+    @And("Admin successfully undoes loan withdrawal")
+    public void undoLoanWithdrawal() {
+        final long loanId = getLoanId();
+        final GetLoansLoanIdTransactions loanWithdrawal = activeLoanWithdrawalTransaction(loanId);
+
+        final PostLoansLoanIdRequest request = loanRequestFactory.defaultLoanWithdrawalUndoRequest();
+        final PostLoansLoanIdResponse response = ok(
+                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", UNDO_LOAN_WITHDRAWAL_COMMAND)));
+        testContext().set(TestContextKey.LOAN_UNDO_LOAN_WITHDRAWAL_RESPONSE, response);
+        assertThat(response.getResourceId()).as("Undone loan withdrawal transaction id").isEqualTo(loanWithdrawal.getId());
+
+        eventCheckHelper.checkTransactionWithLoanTransactionAdjustmentBizEvent(loanWithdrawal);
+        eventCheckHelper.loanUndoLoanWithdrawalEventCheck(loanWithdrawal);
+        eventCheckHelper.loanBalanceChangedEventCheck(loanId);
+    }
+
+    @Then("Admin fails to undo loan withdrawal because the loan has no loan withdrawal applied")
+    public void undoLoanWithdrawalNotAppliedFailure() {
+        assertUndoLoanWithdrawalRejected(ErrorMessageHelper.undoLoanWithdrawalNotAppliedFailure(getLoanId()));
+    }
+
+    @Then("Admin fails to undo loan withdrawal because a user transaction was made after it")
+    public void undoLoanWithdrawalNotLastTransactionFailure() {
+        assertUndoLoanWithdrawalRejected(ErrorMessageHelper.undoLoanWithdrawalNotLastTransactionFailure(getLoanId()));
+    }
+
+    @Then("Loan has sub status {string}")
+    public void loanHasSubStatus(final String subStatusExpected) {
+        final long loanId = getLoanId();
+        final GetLoansLoanIdResponse loanDetails = ok(() -> fineractClient.loans().retrieveOneLoan(loanId, Map.of()));
+        assertThat(loanDetails.getSubStatus()).as("Loan %s sub status", loanId).isNotNull().extracting(GetLoansLoanIdSubStatus::getValue)
+                .isEqualTo(subStatusExpected);
+    }
+
+    @Then("Loan has no sub status")
+    public void loanHasNoSubStatus() {
+        final long loanId = getLoanId();
+        final GetLoansLoanIdResponse loanDetails = ok(() -> fineractClient.loans().retrieveOneLoan(loanId, Map.of()));
+        assertThat(loanDetails.getSubStatus()).as("Loan %s sub status", loanId).isNull();
+    }
+
+    @Then("Loan withdrawal preview on {string} has {double} amount, {double} principal and {double} interest")
+    public void loanWithdrawalPreviewCheck(final String transactionDate, final double amountExpected, final double principalExpected,
+            final double interestExpected) {
+        final long loanId = getLoanId();
+        final GetLoansLoanIdTransactionsTemplateResponse preview = ok(
+                () -> fineractClient.loanTransactions().retrieveTemplateLoanTransaction(loanId, Map.<String, Object>of("command",
+                        LOAN_WITHDRAWAL_COMMAND, "transactionDate", transactionDate, "dateFormat", DATE_FORMAT, "locale", DEFAULT_LOCALE)));
+        assertThat(preview.getAmount()).as("Loan withdrawal preview amount on %s", transactionDate).isEqualTo(amountExpected);
+        assertThat(preview.getPrincipalPortion()).as("Loan withdrawal preview principal on %s", transactionDate)
+                .isEqualTo(principalExpected);
+        assertThat(preview.getInterestPortion()).as("Loan withdrawal preview interest on %s", transactionDate).isEqualTo(interestExpected);
+    }
+
+    private EventAssertion.EventAssertionBuilder<LoanTransactionDataV1> applyLoanWithdrawalAndAssertEvent(
+            final PostLoansLoanIdRequest request) {
+        final long loanId = getLoanId();
+        final PostLoansLoanIdResponse response = ok(
+                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", LOAN_WITHDRAWAL_COMMAND)));
+        testContext().set(TestContextKey.LOAN_WITHDRAWAL_RESPONSE, response);
+        final Long transactionId = response.getResourceId();
+        // the two early-termination kinds share one code path, so the event must carry the withdrawal flag only
+        return eventAssertion.assertEvent(LoanTransactionLoanWithdrawalPostBusinessEvent.class, transactionId)
+                .extractingData(LoanTransactionDataV1::getLoanId).isEqualTo(loanId) //
+                .extractingData(LoanTransactionDataV1::getId).isEqualTo(transactionId) //
+                .extractingData(data -> data.getType().getLoanWithdrawal()).isEqualTo(true) //
+                .extractingData(data -> data.getType().getContractTermination()).isEqualTo(false);
+    }
+
+    private void assertLoanWithdrawalRejected(final String transactionDate, final String errorMessageExpected) {
+        final long loanId = getLoanId();
+        final PostLoansLoanIdRequest request = loanRequestFactory.defaultLoanWithdrawalRequest().transactionDate(transactionDate);
+        final CallFailedRuntimeException exception = fail(
+                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", LOAN_WITHDRAWAL_COMMAND)));
+        assertCallRejected(exception, 400, errorMessageExpected);
+    }
+
+    private void assertUndoLoanWithdrawalRejected(final String errorMessageExpected) {
+        final long loanId = getLoanId();
+        final PostLoansLoanIdRequest request = loanRequestFactory.defaultLoanWithdrawalUndoRequest();
+        final CallFailedRuntimeException exception = fail(
+                () -> fineractClient.loans().handleCommandsLoan(loanId, request, Map.of("command", UNDO_LOAN_WITHDRAWAL_COMMAND)));
+        assertCallRejected(exception, 403, errorMessageExpected);
+    }
+
+    private GetLoansLoanIdTransactions activeLoanWithdrawalTransaction(final long loanId) {
+        final GetLoansLoanIdResponse loanDetails = ok(() -> fineractClient.loans().retrieveOneLoan(loanId,
+                Map.of("staffInSelectedOfficeOnly", "false", "associations", "transactions")));
+        return Objects.requireNonNull(loanDetails.getTransactions(), "transactions").stream()
+                .filter(t -> t.getType() != null && Boolean.TRUE.equals(t.getType().getLoanWithdrawal()))
+                .filter(t -> !Boolean.TRUE.equals(t.getManuallyReversed())).findFirst()
+                .orElseThrow(() -> new AssertionError("Loan " + loanId + " has no active loan withdrawal transaction"));
     }
 
     @Then("Capitalized income adjustment with payment type {string} on {string} is forbidden with amount {string} due to future date")

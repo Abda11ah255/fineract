@@ -558,6 +558,7 @@ public class LoanTransactionsApiResource {
             case capitalizedIncomeAmortization -> LoanTransactionType.CAPITALIZED_INCOME_AMORTIZATION;
             case capitalizedIncomeAdjustment -> LoanTransactionType.CAPITALIZED_INCOME_ADJUSTMENT;
             case contractTermination -> LoanTransactionType.CONTRACT_TERMINATION;
+            case loanWithdrawal -> LoanTransactionType.LOAN_WITHDRAWAL;
             case capitalizedIncomeAmortizationAdjustment -> LoanTransactionType.CAPITALIZED_INCOME_AMORTIZATION_ADJUSTMENT;
             case buyDownFeeAmortization -> LoanTransactionType.BUY_DOWN_FEE_AMORTIZATION;
             case buyDownFeeAmortizationAdjustment -> LoanTransactionType.BUY_DOWN_FEE_AMORTIZATION_ADJUSTMENT;
@@ -571,6 +572,9 @@ public class LoanTransactionsApiResource {
         final CommandWrapperBuilder builder = new CommandWrapperBuilder().withJson(apiRequestBodyAsJson);
 
         ExternalId loanExternalId = ExternalIdFactory.produce(loanExternalIdStr);
+        if (!loanExternalId.isEmpty()) {
+            builder.withLoanExternalId(loanExternalId);
+        }
         Long resolvedLoanId = loanId == null ? loanReadPlatformService.getResolvedLoanId(loanExternalId) : loanId;
 
         CommandWrapper commandRequest = null;
@@ -676,8 +680,7 @@ public class LoanTransactionsApiResource {
             transactionData = this.loanReadPlatformService.retrieveDisbursalTemplate(resolvedLoanId, false);
         } else if (CommandParameterUtil.is(commandParam, "recoverypayment")) {
             transactionData = this.loanReadPlatformService.retrieveRecoveryPaymentTemplate(resolvedLoanId);
-        } else if (CommandParameterUtil.is(commandParam, "prepayLoan")
-                || CommandParameterUtil.is(commandParam, LoanApiConstants.CONTRACT_TERMINATION_COMMAND)) {
+        } else if (CommandParameterUtil.is(commandParam, "prepayLoan")) {
             LocalDate transactionDate;
             if (transactionDateParam == null) {
                 transactionDate = DateUtils.getBusinessLocalDate();
@@ -686,6 +689,11 @@ public class LoanTransactionsApiResource {
             }
             transactionData = this.loanReadPlatformService.retrieveLoanPrePaymentTemplate(LoanTransactionType.REPAYMENT, resolvedLoanId,
                     transactionDate);
+        } else if (CommandParameterUtil.is(commandParam, LoanApiConstants.CONTRACT_TERMINATION_COMMAND)
+                || CommandParameterUtil.is(commandParam, LoanApiConstants.LOAN_WITHDRAWAL_COMMAND)) {
+            final LocalDate transactionDate = transactionDateParam == null ? DateUtils.getBusinessLocalDate()
+                    : transactionDateParam.getDate("transactionDate", dateFormat, locale);
+            transactionData = this.loanReadPlatformService.retrieveLoanEarlyTerminationTemplate(resolvedLoanId, transactionDate);
         } else if (CommandParameterUtil.is(commandParam, "refundbycash")) {
             transactionData = this.loanReadPlatformService.retrieveRefundByCashTemplate(resolvedLoanId);
         } else if (CommandParameterUtil.is(commandParam, "refundbytransfer")) {
@@ -735,6 +743,9 @@ public class LoanTransactionsApiResource {
         final CommandWrapperBuilder builder = new CommandWrapperBuilder().withJson(apiRequestBodyAsJson);
 
         ExternalId loanExternalId = ExternalIdFactory.produce(loanExternalIdStr);
+        if (!loanExternalId.isEmpty()) {
+            builder.withLoanExternalId(loanExternalId);
+        }
         ExternalId transactionExternalId = ExternalIdFactory.produce(transactionExternalIdStr);
 
         Long resolvedLoanId = loanId == null ? loanReadPlatformService.getResolvedLoanId(loanExternalId) : loanId;

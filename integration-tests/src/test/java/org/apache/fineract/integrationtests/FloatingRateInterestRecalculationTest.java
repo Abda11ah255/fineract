@@ -21,18 +21,17 @@ package org.apache.fineract.integrationtests;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.google.gson.JsonParser;
 import java.math.BigDecimal;
-import java.util.HashMap;
 import java.util.List;
 import org.apache.fineract.client.models.FloatingRateCreateRequest;
 import org.apache.fineract.client.models.FloatingRateCreateResponse;
 import org.apache.fineract.client.models.FloatingRatePeriodRequest;
+import org.apache.fineract.client.models.FloatingRateUpdateRequest;
 import org.apache.fineract.client.models.GetLoansLoanIdRepaymentPeriod;
 import org.apache.fineract.client.models.GetLoansLoanIdResponse;
 import org.apache.fineract.integrationtests.client.feign.FeignLoanTestBase;
-import org.apache.fineract.integrationtests.client.feign.helpers.FeignRawHttpHelper;
 import org.apache.fineract.integrationtests.client.feign.modules.LoanRequestBuilders;
+import org.apache.fineract.integrationtests.common.SchedulerJobHelper;
 import org.apache.fineract.integrationtests.common.Utils;
 import org.apache.fineract.integrationtests.common.accounting.Account;
 import org.apache.fineract.integrationtests.common.loans.LoanProductTestBuilder;
@@ -59,6 +58,52 @@ public class FloatingRateInterestRecalculationTest extends FeignLoanTestBase {
         runFloatingRateRecalculationScenario(true);
     }
 
+    /**
+     * FINERACT-2921: a floating rate period added after the loan is already active has no repayment to trigger
+     * recalculation - only the nightly "Recalculate Interest For Loans" job selects it. That selection used to filter
+     * on m_floating_rates_periods.created_date, which is never written (the entity only populates created_on_utc via
+     * JPA auditing), so the job never picked up loans affected by a rate change like this one.
+     */
+    @Test
+    public void testScheduledJobRecalculatesEmiOnFloatingRateChangeAddedAfterDisbursement() {
+        runAt("01 February 2024", () -> {
+            Long floatingRateId = createFloatingRateWithSinglePeriod(INITIAL_INTEREST_RATE, "01 March 2024");
+
+            final Account assetAccount = accountHelper.createAssetAccount("floatingRateAsset2");
+            final Account incomeAccount = accountHelper.createIncomeAccount("floatingRateIncome2");
+            final Account expenseAccount = accountHelper.createExpenseAccount("floatingRateExpense2");
+            final Account overpaymentAccount = accountHelper.createLiabilityAccount("floatingRateOverpayment2");
+
+            Long loanProductId = createCumulativeFloatingRateLoanProduct(floatingRateId, assetAccount, incomeAccount, expenseAccount,
+                    overpaymentAccount);
+            assertNotNull(loanProductId);
+
+            final Long clientId = createClient();
+
+            updateBusinessDate("15 March 2024");
+            final Long loanId = createAndDisburseLoan(clientId, loanProductId, "15 March 2024");
+            assertNotNull(loanId);
+
+            BigDecimal initialEmi = emiForPeriod(getLoanDetails(loanId), 2);
+            assertNotNull(initialEmi, "Could not find initial EMI for period 2");
+
+            // fromDate must be strictly after the business date, so add the period before advancing it - this is
+            // just an input validation rule, unrelated to the bug (which is about created_on_utc, the row's
+            // insert timestamp, not fromDate).
+            addFloatingRatePeriod(floatingRateId, CHANGED_INTEREST_RATE, "17 March 2024");
+            updateBusinessDate("20 March 2024");
+
+            SchedulerJobHelper.executeAndAwaitJob("Recalculate Interest For Loans");
+
+            BigDecimal updatedEmi = emiForPeriod(getLoanDetails(loanId), 2);
+            assertNotNull(updatedEmi, "Could not find updated EMI for period 2");
+            assertTrue(updatedEmi.compareTo(initialEmi) < 0,
+                    "Period 2 EMI (" + updatedEmi + ") should be lower than the initial EMI (" + initialEmi
+                            + ") after the floating rate changed from " + INITIAL_INTEREST_RATE + "% to " + CHANGED_INTEREST_RATE
+                            + "% via the scheduled job, with no repayment to trigger recalculation otherwise");
+        });
+    }
+
     private void runFloatingRateRecalculationScenario(boolean overPayment) {
         runAt("01 February 2024", () -> {
             Long floatingRateId = createFloatingRate();
@@ -68,7 +113,7 @@ public class FloatingRateInterestRecalculationTest extends FeignLoanTestBase {
             final Account expenseAccount = accountHelper.createExpenseAccount("floatingRateExpense");
             final Account overpaymentAccount = accountHelper.createLiabilityAccount("floatingRateOverpayment");
 
-            Integer loanProductId = createCumulativeFloatingRateLoanProduct(floatingRateId, assetAccount, incomeAccount, expenseAccount,
+            Long loanProductId = createCumulativeFloatingRateLoanProduct(floatingRateId, assetAccount, incomeAccount, expenseAccount,
                     overpaymentAccount);
             assertNotNull(loanProductId);
 
@@ -118,6 +163,35 @@ public class FloatingRateInterestRecalculationTest extends FeignLoanTestBase {
         });
     }
 
+    private BigDecimal emiForPeriod(GetLoansLoanIdResponse loan, int periodNumber) {
+        assertNotNull(loan.getRepaymentSchedule());
+        for (GetLoansLoanIdRepaymentPeriod period : loan.getRepaymentSchedule().getPeriods()) {
+            if (period.getPeriod() != null && period.getPeriod() == periodNumber) {
+                return period.getTotalDueForPeriod();
+            }
+        }
+        return null;
+    }
+
+    private Long createFloatingRateWithSinglePeriod(BigDecimal rate, String fromDate) {
+        FloatingRatePeriodRequest period = new FloatingRatePeriodRequest().fromDate(fromDate).interestRate(rate)
+                .isDifferentialToBaseLendingRate(false).locale("en").dateFormat("dd MMMM yyyy");
+        FloatingRateCreateRequest floatingRateRequest = new FloatingRateCreateRequest()
+                .name(Utils.uniqueRandomStringGenerator("FLOAT_RATE_", 6)).isBaseLendingRate(false).isActive(true)
+                .ratePeriods(List.of(period));
+        FloatingRateCreateResponse response = ok(() -> fineractClient().floatingRates().createFloatingRate(floatingRateRequest));
+        assertNotNull(response);
+        assertNotNull(response.getResourceId());
+        return response.getResourceId();
+    }
+
+    private void addFloatingRatePeriod(Long floatingRateId, BigDecimal rate, String fromDate) {
+        FloatingRatePeriodRequest newPeriod = new FloatingRatePeriodRequest().fromDate(fromDate).interestRate(rate)
+                .isDifferentialToBaseLendingRate(false).locale("en").dateFormat("dd MMMM yyyy");
+        FloatingRateUpdateRequest updateRequest = new FloatingRateUpdateRequest().ratePeriods(List.of(newPeriod));
+        ok(() -> fineractClient().floatingRates().updateFloatingRate(floatingRateId, updateRequest));
+    }
+
     private Long createFloatingRate() {
         FloatingRatePeriodRequest initialPeriod = new FloatingRatePeriodRequest().fromDate("01 March 2024")
                 .interestRate(INITIAL_INTEREST_RATE).isDifferentialToBaseLendingRate(false).locale("en").dateFormat("dd MMMM yyyy");
@@ -135,37 +209,31 @@ public class FloatingRateInterestRecalculationTest extends FeignLoanTestBase {
         return response.getResourceId();
     }
 
-    private Integer createCumulativeFloatingRateLoanProduct(Long floatingRateId, Account... accounts) {
-        final HashMap<String, Object> loanProductMap = new LoanProductTestBuilder().withPrincipal("10000").withNumberOfRepayments("12")
-                .withRepaymentTypeAsMonth().withRepaymentAfterEvery("1").withInterestTypeAsDecliningBalance()
-                .withAmortizationTypeAsEqualInstallments().withInterestCalculationPeriodTypeAsRepaymentPeriod(true)
+    private Long createCumulativeFloatingRateLoanProduct(Long floatingRateId, Account... accounts) {
+        return createLoanProduct(new LoanProductTestBuilder().withPrincipal("10000").withNumberOfRepayments("12").withRepaymentTypeAsMonth()
+                .withRepaymentAfterEvery("1").withInterestTypeAsDecliningBalance().withAmortizationTypeAsEqualInstallments()
+                .withInterestCalculationPeriodTypeAsRepaymentPeriod(true)
                 .withInterestRecalculationDetails(LoanProductTestBuilder.RECALCULATION_COMPOUNDING_METHOD_NONE,
                         LoanProductTestBuilder.RECALCULATION_STRATEGY_REDUCE_EMI_AMOUN,
                         LoanProductTestBuilder.INTEREST_APPLICABLE_STRATEGY_ON_PRE_CLOSE_DATE)
                 .withInterestRecalculationRestFrequencyDetails(LoanProductTestBuilder.RECALCULATION_FREQUENCY_TYPE_DAILY, "1", null, null)
-                .withDaysInMonth("30").withDaysInYear("360").withAccountingRulePeriodicAccrual(accounts).build(null, null);
-
-        loanProductMap.remove("interestRatePerPeriod");
-        loanProductMap.remove("interestRateFrequencyType");
-
-        loanProductMap.put("isLinkedToFloatingInterestRates", true);
-        loanProductMap.put("floatingRatesId", floatingRateId);
-        loanProductMap.put("interestRateDifferential", "0");
-        loanProductMap.put("isFloatingInterestRateCalculationAllowed", true);
-        loanProductMap.put("minDifferentialLendingRate", "0");
-        loanProductMap.put("defaultDifferentialLendingRate", "0");
-        loanProductMap.put("maxDifferentialLendingRate", "50");
-
-        String responseJson = FeignRawHttpHelper.post("/loanproducts", Utils.convertToJson(loanProductMap));
-        return JsonParser.parseString(responseJson).getAsJsonObject().get("resourceId").getAsInt();
+                .withDaysInMonth("30").withDaysInYear("360").withAccountingRulePeriodicAccrual(accounts).buildRequest()//
+                .interestRatePerPeriod(null)//
+                .interestRateFrequencyType(null)//
+                .isLinkedToFloatingInterestRates(true)//
+                .floatingRatesId(floatingRateId)//
+                .interestRateDifferential(BigDecimal.ZERO)//
+                .isFloatingInterestRateCalculationAllowed(true)//
+                .minDifferentialLendingRate(BigDecimal.ZERO)//
+                .defaultDifferentialLendingRate(BigDecimal.ZERO)//
+                .maxDifferentialLendingRate(BigDecimal.valueOf(50)));
     }
 
-    private Long createAndDisburseLoan(Long clientId, Integer loanProductId, String disburseDateStr) {
+    private Long createAndDisburseLoan(Long clientId, Long loanProductId, String disburseDateStr) {
         // the product supplies the rate, so the application sends no interestRatePerPeriod
-        final Long loanId = applyForLoan(
-                LoanRequestBuilders.legacyIndividualApplication(clientId, loanProductId.longValue(), "10000", 12, null, disburseDateStr)
-                        .isFloatingInterestRate(true)//
-                        .interestRateDifferential(BigDecimal.ZERO));
+        final Long loanId = applyForLoan(LoanRequestBuilders
+                .legacyIndividualApplication(clientId, loanProductId, "10000", 12, null, disburseDateStr).isFloatingInterestRate(true)//
+                .interestRateDifferential(BigDecimal.ZERO));
         approveLoan(loanId, approveLoanRequest(10000.0, disburseDateStr));
         disburseLoanWithNetDisbursalAmount(loanId, disburseDateStr, "10000");
         return loanId;
